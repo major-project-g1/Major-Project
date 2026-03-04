@@ -226,6 +226,6 @@ def options_handler(path=''):
     return r
 
 if __name__ == '__main__':
-    print("\n🚀 CyberForensics-AI API running at http://localhost:5000\n")
-    app.run(debug=True, port=5000)
-# Note: CORS is handled by after_request hook added below
+    port = int(os.environ.get("PORT", 10000))
+    print(f"\n🚀 CyberForensics-AI API running on port {port}\n")
+    app.run(host="0.0.0.0", port=port)
