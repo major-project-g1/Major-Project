@@ -1,0 +1,336 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>CyberForensics AI — G1</title>
+  <link rel="stylesheet" href="css/style.css" />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+</head>
+<body>
+
+  <!-- ── HEADER ───────────────────────────────────────── -->
+  <header class="header">
+    <div class="header-left">
+      <div class="logo">
+        <span class="logo-icon">⬡</span>
+        <span class="logo-text">CyberForensics<strong>AI</strong></span>
+      </div>
+      <span class="project-tag">Group G1 · CSEP23605</span>
+    </div>
+    <div class="header-right">
+      <span class="api-status" id="apiStatus">
+        <span class="dot"></span> Checking API...
+      </span>
+      <span class="header-time" id="headerTime"></span>
+    </div>
+  </header>
+
+  <!-- ── PAGE WRAPPER ─────────────────────────────────── -->
+  <div class="page">
+
+    <!-- ── SIDEBAR ──────────────────────────────────────── -->
+    <aside class="sidebar">
+      <nav class="nav">
+        <button class="nav-btn active" data-tab="deepfake">
+          <span class="nav-icon">🎭</span>
+          <span>Deepfake<br><small>Image Detector</small></span>
+        </button>
+        <button class="nav-btn" data-tab="cyberbully">
+          <span class="nav-icon">🛡️</span>
+          <span>Cyberbullying<br><small>Text Classifier</small></span>
+        </button>
+        <button class="nav-btn" data-tab="darkweb">
+          <span class="nav-icon">🕸️</span>
+          <span>Dark Web<br><small>Threat Monitor</small></span>
+        </button>
+        <button class="nav-btn" data-tab="logtamper">
+          <span class="nav-icon">📋</span>
+          <span>Log Tampering<br><small>Forensics</small></span>
+        </button>
+        <button class="nav-btn" data-tab="dashboard">
+          <span class="nav-icon">📡</span>
+          <span>Dashboard<br><small>Overview</small></span>
+        </button>
+      </nav>
+
+      <div class="sidebar-stats">
+        <div class="mini-stat"><span class="ms-val" id="s-scans">0</span><span class="ms-lbl">Scans</span></div>
+        <div class="mini-stat"><span class="ms-val danger" id="s-threats">0</span><span class="ms-lbl">Threats</span></div>
+        <div class="mini-stat"><span class="ms-val safe" id="s-safe">0</span><span class="ms-lbl">Safe</span></div>
+      </div>
+    </aside>
+
+    <!-- ── MAIN CONTENT ──────────────────────────────────── -->
+    <main class="main">
+
+      <!-- ═══════════════════════════════════════════════════
+           TAB 1: DEEPFAKE DETECTOR
+      ══════════════════════════════════════════════════════ -->
+      <section class="tab active" id="tab-deepfake">
+        <div class="tab-header">
+          <h1>🎭 Deepfake Image Detector</h1>
+          <p>Upload any face image. The ML model (Random Forest + forensic features) will analyse it for deepfake patterns in real time.</p>
+        </div>
+
+        <div class="two-col">
+          <!-- Left: Upload -->
+          <div class="card">
+            <h3 class="card-title">Upload Image</h3>
+
+            <!-- Drop zone -->
+            <div class="dropzone" id="dropzone">
+              <div class="dz-inner" id="dzInner">
+                <div class="dz-icon">📁</div>
+                <p class="dz-text">Drag &amp; drop an image<br>or click to browse</p>
+                <p class="dz-hint">JPG, PNG, WEBP · max 10 MB</p>
+              </div>
+              <img id="previewImg" class="preview-img" style="display:none" alt="preview" />
+              <input type="file" id="fileInput" accept="image/*" style="display:none" />
+            </div>
+
+            <!-- Quick samples -->
+            <p class="section-label">Or try a quick sample:</p>
+            <div class="chip-row">
+              <button class="chip" onclick="loadSample('real')">✅ Real Face</button>
+              <button class="chip" onclick="loadSample('fake')">⚠️ Deepfake</button>
+              <button class="chip" onclick="loadSample('blended')">🎭 Blended</button>
+            </div>
+
+            <button class="btn-primary" id="dfAnalyseBtn" disabled onclick="runDeepfake()">
+              Analyse Image
+            </button>
+          </div>
+
+          <!-- Right: Result -->
+          <div class="card">
+            <h3 class="card-title">Detection Result</h3>
+            <div id="dfResult" class="result-empty">
+              <span>Result will appear here after analysis</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Feature breakdown -->
+        <div class="card" id="dfFeatureCard" style="display:none">
+          <h3 class="card-title">Feature Analysis Breakdown</h3>
+          <div id="dfFeatures" class="feature-grid"></div>
+        </div>
+
+        <!-- Log -->
+        <div class="card">
+          <h3 class="card-title">Analysis Log</h3>
+          <div class="log-box" id="dfLog">
+            <div class="log-sys">// Ready. Upload an image to begin.</div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ═══════════════════════════════════════════════════
+           TAB 2: CYBERBULLYING
+      ══════════════════════════════════════════════════════ -->
+      <section class="tab" id="tab-cyberbully">
+        <div class="tab-header">
+          <h1>🛡️ Cyberbullying Detector</h1>
+          <p>Paste social media text to classify toxic, harassing, or bullying content using NLP analysis.</p>
+        </div>
+
+        <div class="two-col">
+          <div class="card">
+            <h3 class="card-title">Input Text</h3>
+            <p class="section-label">Sample texts:</p>
+            <div class="chip-row" style="margin-bottom:14px">
+              <button class="chip" onclick="setCBSample(`You're such a loser, nobody likes you. Just go away forever.`)">🔴 Bullying</button>
+              <button class="chip" onclick="setCBSample(`Great work today! Really proud of your progress.`)">✅ Positive</button>
+              <button class="chip" onclick="setCBSample(`I'll find out where you live and make you regret this.`)">🔴 Threat</button>
+              <button class="chip" onclick="setCBSample(`The presentation went well, looking forward to the next one!`)">✅ Neutral</button>
+              <button class="chip" onclick="setCBSample(`You're so ugly and stupid, why do you even exist?`)">🔴 Severe</button>
+            </div>
+            <textarea id="cbText" class="text-input" placeholder="Type or paste text here…" rows="5"></textarea>
+            <div class="row-between" style="margin-top:12px">
+              <select class="select-input" id="cbPlatform">
+                <option>Twitter / X</option>
+                <option>Instagram</option>
+                <option>YouTube</option>
+                <option>Discord</option>
+                <option>Reddit</option>
+              </select>
+              <button class="btn-primary" onclick="runCyberbully()">Classify</button>
+            </div>
+          </div>
+
+          <div class="card">
+            <h3 class="card-title">Classification Result</h3>
+            <div id="cbResult" class="result-empty">
+              <span>Result will appear here</span>
+            </div>
+            <div id="cbScores" style="margin-top:14px"></div>
+          </div>
+        </div>
+
+        <div class="card" id="cbAttentionCard" style="display:none">
+          <h3 class="card-title">Attention Highlights <small style="font-weight:400;color:var(--muted)">— toxic keywords highlighted</small></h3>
+          <div id="cbAttention" class="attention-box"></div>
+        </div>
+      </section>
+
+      <!-- ═══════════════════════════════════════════════════
+           TAB 3: DARK WEB
+      ══════════════════════════════════════════════════════ -->
+      <section class="tab" id="tab-darkweb">
+        <div class="tab-header">
+          <h1>🕸️ Dark Web Threat Monitor</h1>
+          <p>Simulate crawling Tor hidden services and detect threat categories using NLP-based classification.</p>
+        </div>
+
+        <div class="two-col">
+          <div class="card">
+            <h3 class="card-title">Scan Setup</h3>
+            <div class="form-group">
+              <label>Category</label>
+              <select class="select-input" id="dwCat">
+                <option>Drug Markets</option>
+                <option>Hacking Forums</option>
+                <option>Stolen Data / Credentials</option>
+                <option>Ransomware Infrastructure</option>
+                <option>Fraud Services</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label>Keywords</label>
+              <input class="text-input-sm" id="dwKw" value="malware, exploit, RaaS, C2" />
+            </div>
+            <div class="form-group">
+              <label>Nodes to scan: <strong id="dwNodeVal">12</strong></label>
+              <input type="range" min="5" max="40" value="12" id="dwNodes" oninput="document.getElementById('dwNodeVal').textContent=this.value" />
+            </div>
+            <button class="btn-primary" onclick="runDarkWeb()" id="dwBtn">Start Scan</button>
+          </div>
+
+          <div class="card">
+            <h3 class="card-title">Threat Network</h3>
+            <canvas id="dwCanvas" width="420" height="230" style="width:100%;border-radius:6px;background:#0a0f1a"></canvas>
+            <div class="legend">
+              <span class="leg-dot" style="background:#ef4444"></span> Critical
+              <span class="leg-dot" style="background:#f97316"></span> High
+              <span class="leg-dot" style="background:#eab308"></span> Medium
+              <span class="leg-dot" style="background:#22c55e"></span> Low
+            </div>
+          </div>
+        </div>
+
+        <div class="two-col">
+          <div class="card">
+            <h3 class="card-title">Findings</h3>
+            <div id="dwFindings">
+              <div class="result-empty"><span>Run a scan to see findings</span></div>
+            </div>
+          </div>
+          <div class="card">
+            <h3 class="card-title">Crawl Log</h3>
+            <div class="log-box" id="dwLog">
+              <div class="log-sys">// Dark web crawler on standby.</div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ═══════════════════════════════════════════════════
+           TAB 4: LOG TAMPERING
+      ══════════════════════════════════════════════════════ -->
+      <section class="tab" id="tab-logtamper">
+        <div class="tab-header">
+          <h1>📋 Log Tampering Detector</h1>
+          <p>Paste system logs to verify integrity using LSTM anomaly detection and hash-chain verification.</p>
+        </div>
+
+        <div class="two-col">
+          <div class="card">
+            <h3 class="card-title">Log Input</h3>
+            <p class="section-label">Load scenario:</p>
+            <div class="chip-row" style="margin-bottom:12px">
+              <button class="chip" onclick="setLog('clean')">✅ Clean</button>
+              <button class="chip" onclick="setLog('deletion')">🔴 Deleted</button>
+              <button class="chip" onclick="setLog('modified')">⚠️ Modified</button>
+              <button class="chip" onclick="setLog('injected')">🔴 Injected</button>
+              <button class="chip" onclick="setLog('timestamp')">⚠️ Timestamp</button>
+            </div>
+            <textarea id="ltLog" class="text-input" rows="8" placeholder="Paste log entries here…"></textarea>
+            <div class="row-between" style="margin-top:12px">
+              <select class="select-input" id="ltMethod">
+                <option>LSTM Anomaly Detection</option>
+                <option>Hash Chain Verification</option>
+                <option>Combined Analysis</option>
+              </select>
+              <button class="btn-primary" onclick="runLogTamper()">Verify</button>
+            </div>
+          </div>
+
+          <div class="card">
+            <h3 class="card-title">Integrity Report</h3>
+            <div id="ltResult" class="result-empty"><span>Result appears here</span></div>
+            <div id="ltIssues" style="margin-top:14px"></div>
+          </div>
+        </div>
+
+        <div class="card">
+          <h3 class="card-title">Forensics Log</h3>
+          <div class="log-box" id="ltLog2">
+            <div class="log-sys">// LSTM Integrity Engine — Ready.</div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ═══════════════════════════════════════════════════
+           TAB 5: DASHBOARD
+      ══════════════════════════════════════════════════════ -->
+      <section class="tab" id="tab-dashboard">
+        <div class="tab-header">
+          <h1>📡 Platform Dashboard</h1>
+          <p>Unified view of all detection modules and session activity.</p>
+        </div>
+
+        <div class="four-col stat-row">
+          <div class="stat-card"><div class="stat-val" id="d-scans">0</div><div class="stat-lbl">Total Scans</div></div>
+          <div class="stat-card danger"><div class="stat-val" id="d-threats">0</div><div class="stat-lbl">Threats Found</div></div>
+          <div class="stat-card warn"><div class="stat-val" id="d-warns">0</div><div class="stat-lbl">Warnings</div></div>
+          <div class="stat-card safe"><div class="stat-val" id="d-safe">0</div><div class="stat-lbl">Safe</div></div>
+        </div>
+
+        <div class="two-col">
+          <div class="card">
+            <h3 class="card-title">Live Event Feed</h3>
+            <div class="log-box" id="dashFeed">
+              <div class="log-sys">// Waiting for analysis events…</div>
+            </div>
+          </div>
+          <div class="card">
+            <h3 class="card-title">Module Status</h3>
+            <div class="module-list" id="moduleList">
+              <div class="module-row"><span>🎭 Deepfake Detector</span><span class="badge blue">CNN+RF</span></div>
+              <div class="module-row"><span>🛡️ Cyberbullying NLP</span><span class="badge purple">BERT-sim</span></div>
+              <div class="module-row"><span>🕸️ Dark Web Monitor</span><span class="badge orange">NLP+Crawl</span></div>
+              <div class="module-row"><span>📋 Log Integrity</span><span class="badge green">LSTM</span></div>
+            </div>
+          </div>
+        </div>
+
+        <div class="card">
+          <h3 class="card-title">Project Info</h3>
+          <div class="info-grid">
+            <div><strong>Project:</strong> Intelligent Multi-Threat Cyber Forensics Platform</div>
+            <div><strong>Team:</strong> Dhyan Kumar M, Vathsalya V, Meghana H J, Sammita Abhay</div>
+            <div><strong>Guide:</strong> Mr. B S Umashankar, Professor</div>
+            <div><strong>Course:</strong> CSEP23605 — 6th Semester Major Project Phase I</div>
+            <div><strong>College:</strong> Dept. of CSE · GAT · 2025–26</div>
+            <div><strong>ML Model:</strong> Random Forest (200 trees, 28 forensic features)</div>
+          </div>
+        </div>
+      </section>
+
+    </main>
+  </div>
+
+  <script src="js/app.js"></script>
+</body>
+</html>
