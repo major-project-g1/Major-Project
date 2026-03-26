@@ -3,7 +3,7 @@
    All module logic: Deepfake (ML API), Cyberbullying, Dark Web, Log Tamper
 ───────────────────────────────────────────────────────────────── */
 
-const API = 'https://major-project-te5y.onrender.com/api';
+const API = 'http://localhost:10000/api';
 
 /* ══════════════════════════════════════════════════════════════════
    GLOBAL STATE & HELPERS
