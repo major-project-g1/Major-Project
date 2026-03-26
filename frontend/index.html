@@ -1,12 +1,16 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>CyberForensics AI — G1</title>
   <link rel="stylesheet" href="css/style.css" />
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <link
+    href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap"
+    rel="stylesheet" />
 </head>
+
 <body>
 
   <!-- ── HEADER ───────────────────────────────────────── -->
@@ -56,7 +60,8 @@
 
       <div class="sidebar-stats">
         <div class="mini-stat"><span class="ms-val" id="s-scans">0</span><span class="ms-lbl">Scans</span></div>
-        <div class="mini-stat"><span class="ms-val danger" id="s-threats">0</span><span class="ms-lbl">Threats</span></div>
+        <div class="mini-stat"><span class="ms-val danger" id="s-threats">0</span><span class="ms-lbl">Threats</span>
+        </div>
         <div class="mini-stat"><span class="ms-val safe" id="s-safe">0</span><span class="ms-lbl">Safe</span></div>
       </div>
     </aside>
@@ -70,7 +75,8 @@
       <section class="tab active" id="tab-deepfake">
         <div class="tab-header">
           <h1>🎭 Deepfake Image Detector</h1>
-          <p>Upload any face image. The ML model (Random Forest + forensic features) will analyse it for deepfake patterns in real time.</p>
+          <p>Upload any face image. The ML model (XGBoost-v1 + forensic features) will analyse it for deepfake patterns
+            in real time.</p>
         </div>
 
         <div class="two-col">
@@ -140,11 +146,17 @@
             <h3 class="card-title">Input Text</h3>
             <p class="section-label">Sample texts:</p>
             <div class="chip-row" style="margin-bottom:14px">
-              <button class="chip" onclick="setCBSample(`You're such a loser, nobody likes you. Just go away forever.`)">🔴 Bullying</button>
-              <button class="chip" onclick="setCBSample(`Great work today! Really proud of your progress.`)">✅ Positive</button>
-              <button class="chip" onclick="setCBSample(`I'll find out where you live and make you regret this.`)">🔴 Threat</button>
-              <button class="chip" onclick="setCBSample(`The presentation went well, looking forward to the next one!`)">✅ Neutral</button>
-              <button class="chip" onclick="setCBSample(`You're so ugly and stupid, why do you even exist?`)">🔴 Severe</button>
+              <button class="chip"
+                onclick="setCBSample(`You're such a loser, nobody likes you. Just go away forever.`)">🔴
+                Bullying</button>
+              <button class="chip" onclick="setCBSample(`Great work today! Really proud of your progress.`)">✅
+                Positive</button>
+              <button class="chip" onclick="setCBSample(`I'll find out where you live and make you regret this.`)">🔴
+                Threat</button>
+              <button class="chip"
+                onclick="setCBSample(`The presentation went well, looking forward to the next one!`)">✅ Neutral</button>
+              <button class="chip" onclick="setCBSample(`You're so ugly and stupid, why do you even exist?`)">🔴
+                Severe</button>
             </div>
             <textarea id="cbText" class="text-input" placeholder="Type or paste text here…" rows="5"></textarea>
             <div class="row-between" style="margin-top:12px">
@@ -169,7 +181,8 @@
         </div>
 
         <div class="card" id="cbAttentionCard" style="display:none">
-          <h3 class="card-title">Attention Highlights <small style="font-weight:400;color:var(--muted)">— toxic keywords highlighted</small></h3>
+          <h3 class="card-title">Attention Highlights <small style="font-weight:400;color:var(--muted)">— toxic keywords
+              highlighted</small></h3>
           <div id="cbAttention" class="attention-box"></div>
         </div>
       </section>
@@ -202,14 +215,16 @@
             </div>
             <div class="form-group">
               <label>Nodes to scan: <strong id="dwNodeVal">12</strong></label>
-              <input type="range" min="5" max="40" value="12" id="dwNodes" oninput="document.getElementById('dwNodeVal').textContent=this.value" />
+              <input type="range" min="5" max="40" value="12" id="dwNodes"
+                oninput="document.getElementById('dwNodeVal').textContent=this.value" />
             </div>
             <button class="btn-primary" onclick="runDarkWeb()" id="dwBtn">Start Scan</button>
           </div>
 
           <div class="card">
             <h3 class="card-title">Threat Network</h3>
-            <canvas id="dwCanvas" width="420" height="230" style="width:100%;border-radius:6px;background:#0a0f1a"></canvas>
+            <canvas id="dwCanvas" width="420" height="230"
+              style="width:100%;border-radius:6px;background:#0a0f1a"></canvas>
             <div class="legend">
               <span class="leg-dot" style="background:#ef4444"></span> Critical
               <span class="leg-dot" style="background:#f97316"></span> High
@@ -291,10 +306,22 @@
         </div>
 
         <div class="four-col stat-row">
-          <div class="stat-card"><div class="stat-val" id="d-scans">0</div><div class="stat-lbl">Total Scans</div></div>
-          <div class="stat-card danger"><div class="stat-val" id="d-threats">0</div><div class="stat-lbl">Threats Found</div></div>
-          <div class="stat-card warn"><div class="stat-val" id="d-warns">0</div><div class="stat-lbl">Warnings</div></div>
-          <div class="stat-card safe"><div class="stat-val" id="d-safe">0</div><div class="stat-lbl">Safe</div></div>
+          <div class="stat-card">
+            <div class="stat-val" id="d-scans">0</div>
+            <div class="stat-lbl">Total Scans</div>
+          </div>
+          <div class="stat-card danger">
+            <div class="stat-val" id="d-threats">0</div>
+            <div class="stat-lbl">Threats Found</div>
+          </div>
+          <div class="stat-card warn">
+            <div class="stat-val" id="d-warns">0</div>
+            <div class="stat-lbl">Warnings</div>
+          </div>
+          <div class="stat-card safe">
+            <div class="stat-val" id="d-safe">0</div>
+            <div class="stat-lbl">Safe</div>
+          </div>
         </div>
 
         <div class="two-col">
@@ -323,7 +350,7 @@
             <div><strong>Guide:</strong> Mr. B S Umashankar, Professor</div>
             <div><strong>Course:</strong> CSEP23605 — 6th Semester Major Project Phase I</div>
             <div><strong>College:</strong> Dept. of CSE · GAT · 2025–26</div>
-            <div><strong>ML Model:</strong> Random Forest (200 trees, 28 forensic features)</div>
+            <div><strong>ML Model:</strong> XGBoost-v1</div>
           </div>
         </div>
       </section>
@@ -333,4 +360,5 @@
 
   <script src="js/app.js"></script>
 </body>
+
 </html>
