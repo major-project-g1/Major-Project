@@ -13,10 +13,13 @@ app = Flask(__name__)
 
 
 # ── Load model ──────────────────────────────────────────────────────
-MODEL_PATH = os.path.join(os.path.dirname(__file__), 'model.pkl')
-model = joblib.load(MODEL_PATH)
-print(f"✅ Model loaded from {MODEL_PATH}")
+MODEL_PATH  = os.path.join(os.path.dirname(__file__), 'model.pkl')
+SCALER_PATH = os.path.join(os.path.dirname(__file__), 'scaler.pkl')
 
+model  = joblib.load(MODEL_PATH)
+scaler = joblib.load(SCALER_PATH) 
+print(f"✅ Model  loaded from {MODEL_PATH}")
+print(f"✅ Scaler loaded from {SCALER_PATH}")
 
 # ── Feature extraction (same as training) ──────────────────────────
 def extract_features(img: Image.Image) -> np.ndarray:
@@ -80,13 +83,13 @@ def extract_features(img: Image.Image) -> np.ndarray:
         features.append(hist.std())
         features.append(-(hist * np.log(hist + 1e-10)).sum())
 
-    return np.array(features, dtype=np.float32).reshape(1, -1)
+    return np.array(features, dtype=np.float32)
 
 
 # ── Routes ─────────────────────────────────────────────────────────
 @app.route('/api/health', methods=['GET'])
 def health():
-    return jsonify({'status': 'online', 'model': 'RandomForest-v1', 'features': 28})
+    return jsonify({'status': 'online', 'model': 'XGBoost-v1', 'features': 34})
 
 
 @app.route('/api/detect', methods=['POST'])
@@ -103,19 +106,21 @@ def detect():
         img_bytes = base64.b64decode(b64)
         img = Image.open(io.BytesIO(img_bytes))
 
-        feats = extract_features(img)
-        pred = model.predict(feats)[0]
-        proba = model.predict_proba(feats)[0]
+        feats = extract_features(img).reshape(1, -1)   # shape: (1, 34)
+        feats_scaled = scaler.transform(feats)          # scale before predicting
+        pred  = model.predict(feats_scaled)[0]
+        proba = model.predict_proba(feats_scaled)[0]
 
         fake_pct = float(proba[1]) * 100
         real_pct = float(proba[0]) * 100
 
         # Feature breakdown for UI display
-        ela_mean  = float(feats[0, 3])
-        hf_ratio  = float(feats[0, 0])
-        edge_mean = float(feats[0, 12])
-        tex_var   = float(feats[0, 15])
-        col_corr  = float(feats[0, 7])
+        # Use original unscaled feats for display values (more interpretable)
+        ela_mean  = float(feats[0, 3])    # ELA mean
+        hf_ratio  = float(feats[0, 0])    # HF/LF ratio
+        edge_mean = float(feats[0, 12])   # edge mean
+        tex_var   = float(feats[0, 15])   # texture variance
+        col_corr  = float(feats[0, 7])    # R-G correlation
 
         # Normalise feature signals to 0-100 for UI
         def sig(val, low, high):
