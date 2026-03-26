@@ -233,7 +233,7 @@ async function runDeepfake() {
       real_pct: 100 - fakePct,
       confidence: Math.max(fakePct, 100 - fakePct),
       time_ms: rnd(80, 200).toFixed(1),
-      model: 'RandomForest-200-trees (demo)',
+      model: 'XGBoost-v1 (demo)',
       features: {
         'ELA Artifact Level': isFake ? rnd(55, 90) : rnd(5, 25),
         'Frequency Anomaly': isFake ? rnd(60, 95) : rnd(3, 20),

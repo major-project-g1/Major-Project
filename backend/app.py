@@ -143,7 +143,7 @@ def detect():
             'confidence': round(max(fake_pct, real_pct), 1),
             'features':   features_display,
             'time_ms':    elapsed,
-            'model':      'RandomForest-200-trees'
+            'model':      'XGBoost-v1'
         })
 
     except Exception as e:
