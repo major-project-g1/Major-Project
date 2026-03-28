@@ -8,9 +8,10 @@ from flask import Flask, request, jsonify
 import joblib, numpy as np
 from PIL import Image, ImageFilter
 import io, base64, os, time
+import re
 
 app = Flask(__name__)
-
+ 
 
 # ── Load model ──────────────────────────────────────────────────────
 MODEL_PATH  = os.path.join(os.path.dirname(__file__), 'model.pkl')
@@ -150,38 +151,61 @@ def detect():
         return jsonify({'error': str(e)}), 500
 
 
+CB_MODEL_PATH = os.path.join(os.path.dirname(__file__), 'cyberbully_model.pkl')
+cb_pipeline   = joblib.load(CB_MODEL_PATH)
+print(f"✅ Cyberbullying model loaded from {CB_MODEL_PATH}")
+
+CB_LABEL_COLS = ['toxic', 'severe_toxic', 'obscene', 'threat', 'insult', 'identity_hate']
+
+
+def cb_clean_text(text: str) -> str:
+    if not isinstance(text, str):
+        return ''
+    text = text.lower()
+    text = re.sub(r'https?://\\S+', ' url ', text)
+    text = re.sub(r'@\\w+', ' user ', text)
+    text = re.sub(r'\\n', ' ', text)
+    text = re.sub(r"[^a-z0-9!?.,\' ]", ' ', text)
+    text = re.sub(r' +', ' ', text).strip()
+    return text
+
+
 @app.route('/api/cyberbully', methods=['POST'])
 def cyberbully():
-    data = request.get_json()
-    text = data.get('text', '').lower()
+    start = time.time()
+    data  = request.get_json()
+    text  = data.get('text', '')
+    if not text.strip():
+        return jsonify({'error': 'No text provided'}), 400
 
-    toxic_keywords = ['loser','nobody likes','go away','regret','ugly','stupid',
-                      'idiot','hate you','kill','die','worthless','pathetic',
-                      'disgusting','freak','moron','shut up','dumb','useless']
-    threat_kw      = ['find out where','make you regret','i will hurt','you will pay']
-    harassment_kw  = ['nobody wants','everyone hates','you should leave']
+    try:
+        cleaned = cb_clean_text(text)
+        proba   = np.array(cb_pipeline.predict_proba([cleaned]))[:, 0, 1]  # (6,)
+        label_probs = dict(zip(CB_LABEL_COLS, proba))
 
-    score = 0
-    labels = {}
-    for kw in toxic_keywords:
-        if kw in text: score += 14
-    for kw in threat_kw:
-        if kw in text: score += 25
-    for kw in harassment_kw:
-        if kw in text: score += 18
-    score = min(100, score + np.random.uniform(0, 5))
+        # Map to UI categories
+        labels = {
+            'Bullying':    round(max(label_probs['toxic'], label_probs['insult']) * 100, 1),
+            'Harassment':  round(max(label_probs['toxic'], label_probs['severe_toxic']) * 100, 1),
+            'Threat':      round(label_probs['threat'] * 100, 1),
+            'Hate Speech': round(label_probs['identity_hate'] * 100, 1),
+            'Profanity':   round(label_probs['obscene'] * 100, 1),
+        }
 
-    labels['Bullying']     = min(100, score * np.random.uniform(0.7, 1.0))
-    labels['Harassment']   = min(100, score * np.random.uniform(0.4, 0.8))
-    labels['Threat']       = min(100, score * np.random.uniform(0.1, 0.5) if any(kw in text for kw in threat_kw) else score * 0.1)
-    labels['Hate Speech']  = min(100, score * np.random.uniform(0.1, 0.4))
-    labels['Profanity']    = min(100, score * np.random.uniform(0.2, 0.5))
+        score   = round(float(max(proba)) * 100, 1)
+        verdict = 'TOXIC' if score >= 30 else 'CLEAN'
+        elapsed = round((time.time() - start) * 1000, 1)
 
-    return jsonify({
-        'verdict':  'TOXIC' if score >= 30 else 'CLEAN',
-        'score':    round(score, 1),
-        'labels':   {k: round(v, 1) for k, v in labels.items()},
-    })
+        return jsonify({
+            'verdict': verdict,
+            'score':   score,
+            'labels':  labels,
+            'time_ms': elapsed,
+            'model':   'TF-IDF+LogReg-v1'
+        })
+
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
 
 
 @app.route('/api/logtamper', methods=['POST'])

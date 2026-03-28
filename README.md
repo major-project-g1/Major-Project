@@ -20,7 +20,7 @@ project/
 │
 ├── backend/
 │   ├── app.py              ← Flask API with ML model
-│   ├── model.pkl           ← Trained Random Forest model
+│   ├── model.pkl           ← Trained XGBoost-v1 model
 │   └── requirements.txt    ← Python dependencies
 │
 └── README.md
@@ -57,7 +57,7 @@ The status indicator in the top-right shows **API Online** when connected.
 
 | Property       | Value                          |
 |----------------|-------------------------------|
-| Algorithm      | Random Forest (200 trees)     |
+| Algorithm      | XGBoost-v1    |
 | Features       | 28 forensic image features    |
 | Training size  | 5000 samples (2500 per class) |
 | Test accuracy  | ~97%+                         |
