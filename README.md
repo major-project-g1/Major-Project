@@ -79,7 +79,7 @@ The status indicator in the top-right shows **API Online** when connected.
 |------------------|------------------------|------------|
 | Deepfake Detector | Random Forest + PIL   | ✅ ML Live |
 | Cyberbullying    | NLP keyword scoring    | ✅ Working |
-| Dark Web Monitor | Simulated crawl + viz  | ✅ Working |
+| Dark Web Intelligence | Live deterministic hidden-service simulation + viz  | ✅ Working     |
 | Log Tampering    | Rule-based + API       | ✅ Working |
 
 ---

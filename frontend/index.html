@@ -4,7 +4,12 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="theme-color" content="#0d1117" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   <title>CyberForensics AI — G1</title>
+  <link rel="manifest" href="manifest.json" />
+  <link rel="apple-touch-icon" href="icons/icon-192.png" />
   <link rel="stylesheet" href="css/style.css" />
   <link
     href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap"
@@ -192,15 +197,16 @@
       ══════════════════════════════════════════════════════ -->
       <section class="tab" id="tab-darkweb">
         <div class="tab-header">
-          <h1>🕸️ Dark Web Threat Monitor</h1>
-          <p>Simulate crawling Tor hidden services and detect threat categories using NLP-based classification.</p>
+          <h1>🕸️ Dark Web Intelligence Monitor</h1>
+          <p>Run a controlled hidden-service intelligence simulation with progressive network updates, onion-style
+            nodes, and threat scoring.</p>
         </div>
 
         <div class="two-col">
           <div class="card">
             <h3 class="card-title">Scan Setup</h3>
             <div class="form-group">
-              <label>Category</label>
+              <label>Dark web category</label>
               <select class="select-input" id="dwCat">
                 <option>Drug Markets</option>
                 <option>Hacking Forums</option>
@@ -210,11 +216,11 @@
               </select>
             </div>
             <div class="form-group">
-              <label>Keywords</label>
+              <label>Threat keywords</label>
               <input class="text-input-sm" id="dwKw" value="malware, exploit, RaaS, C2" />
             </div>
             <div class="form-group">
-              <label>Nodes to scan: <strong id="dwNodeVal">12</strong></label>
+              <label>Hidden-service nodes to scan: <strong id="dwNodeVal">12</strong></label>
               <input type="range" min="5" max="40" value="12" id="dwNodes"
                 oninput="document.getElementById('dwNodeVal').textContent=this.value" />
             </div>
@@ -222,7 +228,7 @@
           </div>
 
           <div class="card">
-            <h3 class="card-title">Threat Network</h3>
+            <h3 class="card-title">Onion Threat Network</h3>
             <canvas id="dwCanvas" width="420" height="230"
               style="width:100%;border-radius:6px;background:#0a0f1a"></canvas>
             <div class="legend">
@@ -234,11 +240,49 @@
           </div>
         </div>
 
+        <div class="card">
+          <h3 class="card-title">Link Intelligence</h3>
+          <p class="section-label">Analyze a dark web or normal URL using structural checks and threat signals.</p>
+          <div class="form-group">
+            <label>URL to inspect</label>
+            <input class="text-input-sm" id="dwLink" placeholder="https://example.com or hiddenservice.onion" />
+          </div>
+          <div class="row-between" style="margin-top:12px">
+            <button class="btn-primary" onclick="runDarkWebLink()" id="dwLinkBtn">Analyze Link</button>
+            <span class="section-label">Checks onion structure, clearnet validity, and suspicious patterns</span>
+          </div>
+          <div id="dwLinkResult" class="result-empty" style="margin-top:12px">
+            <span>Paste a URL to analyze its intelligence profile</span>
+          </div>
+        </div>
+
+        <div class="card">
+          <h3 class="card-title">Page Content Scraper</h3>
+          <p class="section-label">Paste a page snapshot or HTML source to extract titles, links, keywords, and risk
+            signals.</p>
+          <div class="form-group">
+            <label>Page snapshot / HTML</label>
+            <textarea class="text-input" id="dwPageSource" rows="8"
+              placeholder="<html>...paste page source or text snapshot...</html>"></textarea>
+          </div>
+          <div class="form-group">
+            <label>Optional origin URL</label>
+            <input class="text-input-sm" id="dwPageUrl" placeholder="https://site.example or hiddenservice.onion" />
+          </div>
+          <div class="row-between" style="margin-top:12px">
+            <button class="btn-primary" onclick="runDarkWebPageIntel()" id="dwPageBtn">Scrape Snapshot</button>
+            <span class="section-label">Extracts metadata, links, page type, and suspicious signals</span>
+          </div>
+          <div id="dwPageResult" class="result-empty" style="margin-top:12px">
+            <span>Paste a page snapshot to analyze its contents</span>
+          </div>
+        </div>
+
         <div class="two-col">
           <div class="card">
             <h3 class="card-title">Findings</h3>
             <div id="dwFindings">
-              <div class="result-empty"><span>Run a scan to see findings</span></div>
+              <div class="result-empty"><span>Run a scan to see onion intelligence findings</span></div>
             </div>
           </div>
           <div class="card">
@@ -336,7 +380,8 @@
             <div class="module-list" id="moduleList">
               <div class="module-row"><span>🎭 Deepfake Detector</span><span class="badge blue">CNN+XGboost</span></div>
               <div class="module-row"><span>🛡️ Cyberbullying NLP</span><span class="badge purple">BERT-sim</span></div>
-              <div class="module-row"><span>🕸️ Dark Web Monitor</span><span class="badge orange">NLP+Crawl</span></div>
+              <div class="module-row"><span>🕸️ Dark Web Intelligence</span><span class="badge orange">Simulated
+                  Crawl</span></div>
               <div class="module-row"><span>📋 Log Integrity</span><span class="badge green">LSTM</span></div>
             </div>
           </div>
@@ -357,6 +402,10 @@
 
     </main>
   </div>
+
+  <button class="install-btn" id="installAppBtn" type="button" aria-label="Install app" style="display:none">
+    ⬇️ Install App
+  </button>
 
   <script src="js/app.js"></script>
 </body>

@@ -1,9 +1,9 @@
 /* ─────────────────────────────────────────────────────────────────
    CyberForensics AI — app.js
-   All module logic: Deepfake (ML API), Cyberbullying, Dark Web, Log Tamper
+   All module logic: Deepfake (ML API), Cyberbullying, Dark Web Intelligence, Log Tamper
 ───────────────────────────────────────────────────────────────── */
 
-const API = 'https://major-project-te5y.onrender.com/api';
+const API = 'http://localhost:10000/api';
 
 /* ══════════════════════════════════════════════════════════════════
    GLOBAL STATE & HELPERS
@@ -25,6 +25,16 @@ function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 function rnd(a, b) { return Math.random() * (b - a) + a; }
 function fakeHash(n = 8) {
   return Array.from({ length: n }, () => '0123456789abcdef'[Math.floor(Math.random() * 16)]).join('');
+}
+
+function escapeHtml(text) {
+  return String(text).replace(/[&<>"']/g, ch => ({
+    '&': '&amp;',
+    '<': '&lt;',
+    '>': '&gt;',
+    '"': '&quot;',
+    "'": '&#39;',
+  }[ch]));
 }
 
 /* ── Time ───────────────────────────────────────────────────────── */
@@ -68,6 +78,50 @@ function addLog(id, msg, cls = 'log-info') {
 
 function dashLog(msg, cls = 'log-info') {
   addLog('dashFeed', msg, cls);
+}
+
+/* ── PWA setup ──────────────────────────────────────────────────── */
+let deferredInstallPrompt = null;
+
+function setupPWA() {
+  if (!('serviceWorker' in navigator)) return;
+
+  navigator.serviceWorker.register('./sw.js')
+    .then(() => {
+      dashLog('PWA service worker registered.', 'log-sys');
+    })
+    .catch(() => {
+      dashLog('Service worker registration failed.', 'log-warn');
+    });
+
+  const installBtn = qs('#installAppBtn');
+
+  window.addEventListener('beforeinstallprompt', e => {
+    e.preventDefault();
+    deferredInstallPrompt = e;
+    if (installBtn) installBtn.style.display = 'inline-flex';
+  });
+
+  if (installBtn) {
+    installBtn.addEventListener('click', async () => {
+      if (!deferredInstallPrompt) return;
+      deferredInstallPrompt.prompt();
+      const choice = await deferredInstallPrompt.userChoice;
+      if (choice.outcome === 'accepted') {
+        dashLog('Install prompt accepted.', 'log-ok');
+      } else {
+        dashLog('Install prompt dismissed.', 'log-sys');
+      }
+      deferredInstallPrompt = null;
+      installBtn.style.display = 'none';
+    });
+  }
+
+  window.addEventListener('appinstalled', () => {
+    deferredInstallPrompt = null;
+    if (installBtn) installBtn.style.display = 'none';
+    dashLog('App installed successfully.', 'log-ok');
+  });
 }
 
 /* ── Meter HTML ─────────────────────────────────────────────────── */
@@ -300,13 +354,44 @@ const TOXIC_KW = ['loser', 'nobody likes', 'go away', 'regret', 'ugly', 'stupid'
   'idiot', 'hate you', 'kill', 'die', 'worthless', 'pathetic', 'disgusting', 'freak',
   'moron', 'shut up', 'dumb', 'useless', 'you should', 'exist'];
 const THREAT_KW = ['find out where', 'make you regret', 'i will hurt', 'you will pay'];
+const HATE_KW = ['go back to your country', 'your kind', 'you people are', 'religion is garbage'];
+const PROFANE_KW = ['fuck', 'shit', 'bitch', 'asshole', 'bastard', 'motherfucker'];
 
-function localCBScore(text) {
+function localCBAnalyse(text) {
   const t = text.toLowerCase();
-  let score = 0;
-  TOXIC_KW.forEach(kw => { if (t.includes(kw)) score += 14; });
-  THREAT_KW.forEach(kw => { if (t.includes(kw)) score += 25; });
-  return Math.min(100, score + rnd(0, 5));
+  const hits = [];
+  const hitScore = (list, w) => {
+    let s = 0;
+    list.forEach(k => {
+      if (t.includes(k)) { s += w; hits.push(k); }
+    });
+    return s;
+  };
+  const threat = Math.min(100, hitScore(THREAT_KW, 42) + (/\b(kill|hurt|pay|find you)\b/.test(t) ? 20 : 0));
+  const profanity = Math.min(100, hitScore(PROFANE_KW, 28));
+  const hate = Math.min(100, hitScore(HATE_KW, 45));
+  const bullying = Math.min(100, hitScore(TOXIC_KW, 18) + Math.max(0, profanity - 20) * 0.4);
+  const harassment = Math.min(100, Math.max(bullying * 0.85, threat * 0.7));
+  const capsBoost = (text.replace(/[^A-Za-z]/g, '').length >= 8 && /[A-Z]{4,}/.test(text)) ? 8 : 0;
+  const score = Math.min(100, Math.max(bullying, harassment, threat, hate, profanity) + capsBoost);
+  const verdict = score >= 40 ? 'TOXIC' : 'CLEAN';
+
+  return {
+    verdict,
+    score,
+    labels: {
+      Bullying: +bullying.toFixed(1),
+      Harassment: +harassment.toFixed(1),
+      Threat: +threat.toFixed(1),
+      'Hate Speech': +hate.toFixed(1),
+      Profanity: +profanity.toFixed(1),
+    },
+    highlights: Array.from(new Set(hits)).slice(0, 8),
+    analysis: verdict === 'TOXIC'
+      ? 'Rule-based fallback detected harmful wording patterns.'
+      : 'Fallback analysis found no strong harmful patterns.',
+    model: 'Rule+Semantic fallback'
+  };
 }
 
 async function runCyberbully() {
@@ -327,34 +412,34 @@ async function runCyberbully() {
     try {
       const resp = await fetch(`${API}/cyberbully`, {
         method: 'POST',
+        signal: AbortSignal.timeout(6000),
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ text })
       });
-      result = await resp.json();
+      const apiResult = await resp.json();
+      if (
+        resp.ok &&
+        apiResult &&
+        typeof apiResult.score === 'number' &&
+        typeof apiResult.verdict === 'string' &&
+        apiResult.labels &&
+        !apiResult.error
+      ) {
+        result = apiResult;
+      }
     } catch (_) { }
   }
 
   if (!result) {
-    const score = localCBScore(text);
-    const isToxic = score >= 30;
-    result = {
-      verdict: isToxic ? 'TOXIC' : 'CLEAN',
-      score,
-      labels: {
-        'Bullying': isToxic ? score * rnd(0.7, 1.0) : rnd(0, 10),
-        'Harassment': isToxic ? score * rnd(0.4, 0.8) : rnd(0, 8),
-        'Threat': THREAT_KW.some(k => text.toLowerCase().includes(k)) ? score * 0.85 : rnd(0, 5),
-        'Hate Speech': isToxic ? score * rnd(0.1, 0.4) : rnd(0, 6),
-        'Profanity': isToxic ? score * rnd(0.2, 0.5) : rnd(0, 8),
-      }
-    };
+    result = localCBAnalyse(text);
   }
 
   const isToxic = result.verdict === 'TOXIC';
   const cls = isToxic ? 'threat' : 'safe';
   const icon = isToxic ? '⚠️' : '✅';
   const lbl = isToxic ? 'TOXIC CONTENT DETECTED' : 'CONTENT CLEAR';
-  const sub = `Toxicity score: ${result.score.toFixed(1)}% · Platform: ${platform}`;
+  const modelName = result.model || 'Cyberbully Analyzer';
+  const sub = `Toxicity score: ${result.score.toFixed(1)}% · Platform: ${platform} · ${modelName}`;
 
   resultBox.className = '';
   resultBox.innerHTML = `
@@ -362,6 +447,10 @@ async function runCyberbully() {
       <span class="verdict-icon">${icon}</span>
       <div><div class="verdict-label">${lbl}</div><div class="verdict-sub">${sub}</div></div>
     </div>`;
+
+  if (result.analysis) {
+    resultBox.innerHTML += `<div class="section-label" style="margin-top:10px;text-transform:none;letter-spacing:0;font-weight:500">${escapeHtml(result.analysis)}</div>`;
+  }
 
   // Label scores
   let sHtml = '';
@@ -377,14 +466,15 @@ async function runCyberbully() {
   // Attention highlights
   const attnCard = qs('#cbAttentionCard');
   attnCard.style.display = 'block';
-  const words = text.split(' ');
+  const highlightSet = new Set((result.highlights || []).map(x => String(x).toLowerCase()));
+  const words = text.split(/\s+/);
   const attnHtml = words.map(w => {
-    const wl = w.toLowerCase().replace(/[^a-z]/g, '');
-    const isKey = TOXIC_KW.some(k => wl.includes(k)) || THREAT_KW.some(k => text.toLowerCase().includes(k) && k.split(' ')[0] === wl);
+    const wl = w.toLowerCase().replace(/[^a-z0-9']/g, '');
+    const isKey = Array.from(highlightSet).some(h => h && (h === wl || h.includes(wl) || wl.includes(h)));
     const bg = isKey ? (isToxic ? 'rgba(248,81,73,0.2)' : 'rgba(240,136,62,0.2)') : 'transparent';
     const col = isKey ? (isToxic ? 'var(--red)' : 'var(--orange)') : 'inherit';
-    return `<span style="background:${bg};color:${col};padding:1px 5px;border-radius:4px;"> ${w} </span>`;
-  }).join('');
+    return `<span style="background:${bg};color:${col};padding:1px 5px;border-radius:4px;"> ${escapeHtml(w)} </span>`;
+  }).join(' ');
   qs('#cbAttention').innerHTML = attnHtml;
 
   state.scans++;
@@ -398,6 +488,452 @@ async function runCyberbully() {
 ══════════════════════════════════════════════════════════════════ */
 
 let dwCtx = null;
+let dwRunToken = 0;
+
+const DARKWEB_PROFILES = {
+  'Drug Markets': {
+    signals: ['fentanyl', 'oxy', 'pills', 'stash', 'vendor', 'cartel', 'escrow'],
+    baseRisk: 0.72,
+    activity: 'market listing',
+  },
+  'Hacking Forums': {
+    signals: ['exploit', 'rce', 'zero-day', 'privilege escalation', 'botnet', 'c2', 'shell'],
+    baseRisk: 0.68,
+    activity: 'forum thread',
+  },
+  'Stolen Data / Credentials': {
+    signals: ['dump', 'combo', 'credential', 'leak', 'breach', 'access', 'vpn'],
+    baseRisk: 0.84,
+    activity: 'data dump',
+  },
+  'Ransomware Infrastructure': {
+    signals: ['raas', 'decryptor', 'beacon', 'payload', 'persistence', 'affiliate', 'panel'],
+    baseRisk: 0.9,
+    activity: 'infrastructure node',
+  },
+  'Fraud Services': {
+    signals: ['phish', 'spoof', 'carding', 'mule', 'otp', 'otp-bypass', 'identity'],
+    baseRisk: 0.74,
+    activity: 'service listing',
+  },
+};
+
+function darkWebSeed(...parts) {
+  const raw = parts.map(p => String(p).trim().toLowerCase()).join('|');
+  let hash = 5381;
+  for (let i = 0; i < raw.length; i++) {
+    hash = ((hash << 5) + hash) + raw.charCodeAt(i);
+    hash |= 0;
+  }
+  return Math.abs(hash);
+}
+
+function darkWebRng(seed) {
+  let x = seed >>> 0;
+  if (!x) x = 1;
+  return () => {
+    x = (1664525 * x + 1013904223) >>> 0;
+    return x / 4294967296;
+  };
+}
+
+function normalizeDarkWebKeywords(raw) {
+  return String(raw || '')
+    .split(/[,;/\n]+/)
+    .map(s => s.trim().toLowerCase())
+    .filter(Boolean);
+}
+
+function darkWebLevel(score) {
+  if (score >= 0.88) return 'critical';
+  if (score >= 0.7) return 'high';
+  if (score >= 0.48) return 'medium';
+  return 'low';
+}
+
+function darkWebOnion(seed, index) {
+  const rng = darkWebRng(seed + (index + 1) * 7919);
+  const alphabet = 'abcdefghijklmnopqrstuvwxyz234567';
+  let out = '';
+  for (let i = 0; i < 16; i++) out += alphabet[Math.floor(rng() * alphabet.length)];
+  return `${out}.onion`;
+}
+
+function buildDarkWebFallback(category, keywordsRaw, nodeCount) {
+  const profile = DARKWEB_PROFILES[category] || {
+    signals: ['tor', 'market', 'dump', 'proxy', 'exploit'],
+    baseRisk: 0.6,
+    activity: 'hidden service',
+  };
+  const keywords = normalizeDarkWebKeywords(keywordsRaw);
+  const seed = darkWebSeed(category, keywordsRaw, nodeCount);
+  const nodes = [];
+  const findings = [];
+  const timeline = [];
+  const matchedSignals = profile.signals.filter(sig => keywords.includes(sig));
+  const summary = { critical: 0, high: 0, medium: 0, low: 0 };
+  const W = 420, H = 230;
+  const cx = W / 2, cy = H / 2;
+
+  for (let i = 0; i < nodeCount; i++) {
+    const rng = darkWebRng(seed + i * 313);
+    const angle = ((i / Math.max(nodeCount, 1)) * Math.PI * 2) - Math.PI / 2 + (rng() - 0.5) * 0.7;
+    const dist = 55 + rng() * 75;
+    const exposure = 0.15 + rng() * 0.8;
+    const intel = 0.05 + rng() * 0.25;
+    const signalBoost = matchedSignals.length * 0.06;
+    const noise = (rng() * 0.26) - 0.12;
+    const spread = Math.sin((i / Math.max(nodeCount, 1)) * Math.PI * 2) * 0.16;
+    const score = Math.max(0, Math.min(1, 0.25 + (profile.baseRisk * 0.45) + (exposure * 0.2) + (intel * 0.1) + signalBoost + noise + spread));
+    const level = darkWebLevel(score);
+    const x = +(cx + Math.cos(angle) * dist).toFixed(2);
+    const y = +(cy + Math.sin(angle) * dist).toFixed(2);
+    const onion = darkWebOnion(seed, i);
+    const node = {
+      id: `N${String(i + 1).padStart(2, '0')}`,
+      onion,
+      level,
+      score: +(score * 100).toFixed(1),
+      x,
+      y,
+      r: +(6 + rng() * 5).toFixed(2),
+      activity: profile.activity,
+      last_seen: `${String(1 + Math.floor(rng() * 28)).padStart(2, '0')}-${String(1 + Math.floor(rng() * 12)).padStart(2, '0')}-2026`,
+      indicators: [...new Set([...matchedSignals.slice(0, 3), ...keywords.slice(0, 2)])],
+      keywords,
+      delay_ms: Math.floor(220 + (i * 35) + rng() * 120),
+    };
+    nodes.push(node);
+    summary[level]++;
+    if (level === 'critical' || level === 'high') {
+      findings.push({
+        id: node.id,
+        onion: node.onion,
+        level: node.level,
+        score: node.score,
+        activity: node.activity,
+        indicators: node.indicators,
+        last_seen: node.last_seen,
+      });
+    }
+    timeline.push({
+      step: i + 1,
+      node,
+      level,
+      delay_ms: node.delay_ms,
+      message: `Resolved ${node.id} — ${level.toUpperCase()} ${profile.activity} at ${node.onion}`,
+    });
+  }
+
+  return {
+    scan_id: `local-${darkWebSeed(category, keywordsRaw, nodeCount).toString(16).slice(0, 8)}`,
+    category,
+    keywords,
+    nodes,
+    findings,
+    timeline,
+    summary: {
+      ...summary,
+      total: nodeCount,
+      suspicious: findings.length,
+      average_risk: +(nodes.reduce((acc, n) => acc + n.score, 0) / Math.max(nodeCount, 1)).toFixed(1),
+      matched_keywords: matchedSignals,
+      estimated_duration_ms: timeline.reduce((acc, item) => acc + item.delay_ms, 0),
+    },
+    recommendations: findings.length
+      ? ['Correlate onion addresses with IOCs and preserve evidence.']
+      : ['No high-confidence threats found in this simulated crawl.'],
+  };
+}
+
+function buildDarkWebLinkFallback(rawUrl) {
+  const value = String(rawUrl || '').trim();
+  if (!value) return { error: 'Empty URL' };
+
+  const normalized = value.includes('://') ? value : `https://${value}`;
+  let parsed;
+  try {
+    parsed = new URL(normalized);
+  } catch (_) {
+    return { error: 'Invalid URL format' };
+  }
+
+  const scheme = parsed.protocol.replace(':', '').toLowerCase();
+  const host = (parsed.hostname || '').toLowerCase();
+  const path = parsed.pathname || '/';
+  const query = parsed.search ? parsed.search.slice(1) : '';
+  if (!host) return { error: 'Invalid URL format' };
+  if (!host.endsWith('.onion') && host !== 'localhost') {
+    const hasDomain = host.includes('.');
+    const hasIp = /^\d{1,3}(\.\d{1,3}){3}$/.test(host);
+    if (!hasDomain && !hasIp) return { error: 'Invalid URL format' };
+  }
+
+  const signals = [];
+  const notes = [];
+  let risk = 0;
+  const suspiciousTerms = ['login', 'admin', 'panel', 'wallet', 'token', 'verify', 'reset', 'seed', 'password', 'dump', 'leak', 'combo'];
+  const isOnion = host.endsWith('.onion');
+
+  if (scheme === 'http') {
+    risk += 16;
+    signals.push('plain-http');
+    notes.push('No TLS in URL');
+  } else {
+    notes.push('HTTPS URL');
+  }
+
+  if (isOnion) {
+    const onionCore = host.slice(0, -6);
+    const onionV3 = /^[a-z2-7]{56}$/.test(onionCore);
+    const onionV2 = /^[a-z2-7]{16}$/.test(onionCore);
+    if (onionV3) {
+      notes.push('Valid v3 onion structure');
+    } else if (onionV2) {
+      notes.push('Legacy v2 onion structure');
+      risk += 8;
+    } else {
+      risk += 35;
+      signals.push('malformed-onion');
+      notes.push('Malformed onion host');
+    }
+    if (query) {
+      risk += 6;
+      signals.push('query-string');
+    }
+    if (path.length > 24) {
+      risk += 5;
+      signals.push('deep-path');
+    }
+    if (suspiciousTerms.some(term => path.toLowerCase().includes(term))) {
+      risk += 12;
+      signals.push('credential-like-path');
+    }
+  } else {
+    try {
+      new URL(`http://${host}`);
+      if (/^\d{1,3}(\.\d{1,3}){3}$/.test(host)) {
+        risk += 18;
+        signals.push('ip-literal-host');
+        notes.push('Host is an IP literal');
+      }
+    } catch (_) { }
+    if (host.startsWith('xn--') || host.includes('.xn--')) {
+      risk += 10;
+      signals.push('punycode');
+      notes.push('Punycode hostname');
+    }
+    if (query) {
+      risk += 4;
+      signals.push('query-string');
+    }
+    if (path.length > 30) {
+      risk += 4;
+      signals.push('deep-path');
+    }
+    if (suspiciousTerms.some(term => (host + path).toLowerCase().includes(term))) {
+      risk += 10;
+      signals.push('credential-like-path');
+    }
+  }
+
+  const verification = (!isOnion && scheme === 'https' && risk <= 20)
+    ? 'Verified (structural)'
+    : (isOnion && risk <= 20)
+      ? 'Verified (onion structure)'
+      : 'Unverified';
+
+  let verdict = 'CLEAN';
+  if (isOnion) verdict = risk >= 35 ? 'ONION_SUSPICIOUS' : 'ONION_VALID';
+  else verdict = risk >= 35 ? 'CLEARNET_SUSPICIOUS' : 'CLEARNET_VERIFIED';
+
+  return {
+    input: value,
+    normalized,
+    scheme,
+    host,
+    category: isOnion ? 'onion' : 'clearnet',
+    status: isOnion ? 'ONION_STRUCTURAL' : 'CLEARNET_STRUCTURAL',
+    verification,
+    verdict,
+    risk_score: +Math.min(risk, 100).toFixed(1),
+    confidence: +(Math.max(5, Math.min(99, 100 - risk))).toFixed(1),
+    signals,
+    notes,
+    summary: 'Structural URL analysis only; no live target access performed.',
+  };
+}
+
+function renderDarkWebLinkResult(result) {
+  const box = qs('#dwLinkResult');
+  if (!box) return;
+
+  if (!result || result.error) {
+    box.className = 'result-empty';
+    box.innerHTML = `<span>⚠️ ${escapeHtml(result && result.error ? result.error : 'Unable to analyze URL')}</span>`;
+    return;
+  }
+
+  const suspicious = /SUSPICIOUS/.test(result.verdict) || (result.risk_score || 0) >= 35;
+  const icon = result.category === 'onion' ? '🕸️' : '🔗';
+  const statusClass = suspicious ? 'threat' : 'safe';
+  const sigHtml = (result.signals || []).length
+    ? result.signals.map(sig => `<span class="badge ${suspicious ? 'red' : 'orange'}">${escapeHtml(sig)}</span>`).join(' ')
+    : '<span class="badge green">No obvious signals</span>';
+  const noteHtml = (result.notes || []).map(note => `<div class="issue-item ${suspicious ? 'warn' : 'ok'}">• ${escapeHtml(note)}</div>`).join('');
+
+  box.className = '';
+  box.innerHTML = `
+    <div class="verdict ${statusClass}">
+      <span class="verdict-icon">${icon}</span>
+      <div>
+        <div class="verdict-label">${escapeHtml(result.verdict.replace(/_/g, ' '))}</div>
+        <div class="verdict-sub">${escapeHtml(result.verification)} · Confidence ${result.confidence}%</div>
+      </div>
+    </div>
+    <div class="stat-detail">
+      <div class="sd-item"><div class="sd-label">URL Type</div><div class="sd-value blue">${escapeHtml(result.category)}</div></div>
+      <div class="sd-item"><div class="sd-label">Risk Score</div><div class="sd-value ${suspicious ? 'red' : 'green'}">${result.risk_score}%</div></div>
+      <div class="sd-item"><div class="sd-label">Host</div><div class="sd-value blue">${escapeHtml(result.host)}</div></div>
+      <div class="sd-item"><div class="sd-label">Signals</div><div class="sd-value orange">${(result.signals || []).length}</div></div>
+    </div>
+    <div class="issue-item ${suspicious ? 'warn' : 'ok'}">${escapeHtml(result.summary)}</div>
+    <div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap;">${sigHtml}</div>
+    <div style="margin-top:10px;">${noteHtml}</div>
+  `;
+}
+
+function parseDarkWebSnapshot(rawSource) {
+  const source = String(rawSource || '').trim();
+  if (!source) return { error: 'Empty page source' };
+
+  const isHtml = /<[^>]+>/.test(source);
+  let title = 'Untitled page';
+  let text = source;
+  let links = [];
+
+  if (isHtml && window.DOMParser) {
+    try {
+      const doc = new DOMParser().parseFromString(source, 'text/html');
+      title = (doc.querySelector('title')?.textContent || title).trim() || title;
+      text = (doc.body?.innerText || source).trim();
+      links = Array.from(doc.querySelectorAll('a[href]')).map(a => a.getAttribute('href')).filter(Boolean);
+    } catch (_) {
+      links = [];
+    }
+  } else {
+    const titleMatch = source.match(/<title[^>]*>([\s\S]*?)<\/title>/i);
+    if (titleMatch) title = titleMatch[1].trim() || title;
+    links = (source.match(/https?:\/\/[^\s"'<>]+|[a-z2-7]{16,56}\.onion[^\s"'<>]*/gi) || []).map(s => s.trim());
+    text = source.replace(/<[^>]+>/g, ' ');
+  }
+
+  const lowered = text.toLowerCase();
+  const signalMap = {
+    market: ['market', 'vendor', 'cartel', 'stash', 'escrow', 'order'],
+    forum: ['forum', 'thread', 'reply', 'post', 'account', 'profile'],
+    login: ['login', 'signin', 'authenticate', 'password', 'otp', '2fa'],
+    leak: ['dump', 'leak', 'database', 'credentials', 'combo', 'breach'],
+    fraud: ['carding', 'phish', 'spoof', 'wallet', 'mule', 'otp-bypass'],
+    ransomware: ['raas', 'decryptor', 'beacon', 'panel', 'payload', 'affiliate'],
+  };
+
+  const pageTypes = [];
+  for (const [label, keywords] of Object.entries(signalMap)) {
+    const score = keywords.reduce((acc, kw) => acc + (lowered.includes(kw) ? 1 : 0), 0);
+    if (score) pageTypes.push([label, score]);
+  }
+  const pageType = pageTypes.length ? pageTypes[0][0] : 'general';
+  const keywordHits = [...new Set(Object.values(signalMap).flat().filter(kw => lowered.includes(kw)))];
+
+  const cleanedLinks = [...new Set(links.map(l => l.trim()).filter(Boolean))];
+  let onionLinks = 0;
+  let externalLinks = 0;
+  let suspiciousLinks = 0;
+  cleanedLinks.forEach(href => {
+    const host = (() => {
+      try {
+        const u = new URL(href.includes('://') ? href : `https://${href}`);
+        return (u.hostname || '').toLowerCase();
+      } catch (_) {
+        return '';
+      }
+    })();
+    if (host.endsWith('.onion')) onionLinks++;
+    else if (host) externalLinks++;
+    if (/(login|wallet|token|password|dump|leak)/i.test(href + ' ' + lowered)) suspiciousLinks++;
+  });
+
+  let risk = 0;
+  if (onionLinks) risk += 14;
+  if (suspiciousLinks) risk += suspiciousLinks * 8;
+  if (['leak', 'fraud', 'ransomware'].includes(pageType)) risk += 18;
+  if (pageType === 'login') risk += 10;
+  if (keywordHits.length >= 4) risk += 12;
+  const wordCount = (text.match(/\b\w+\b/g) || []).length;
+  if (wordCount < 20) risk += 8;
+
+  return {
+    title,
+    page_type: pageType,
+    word_count: wordCount,
+    link_count: cleanedLinks.length,
+    onion_links: onionLinks,
+    external_links: externalLinks,
+    suspicious_links: suspiciousLinks,
+    keywords: keywordHits,
+    risk_score: +Math.min(risk, 100).toFixed(1),
+    confidence: +(Math.max(5, Math.min(99, 100 - risk))).toFixed(1),
+    verification: isHtml ? 'Verified snapshot' : 'Text snapshot',
+    verdict: risk >= 30 ? 'SUSPICIOUS' : 'NORMAL',
+    links: cleanedLinks.slice(0, 20),
+    summary: 'Snapshot-only page analysis; no live site fetch performed.',
+  };
+}
+
+function renderDarkWebPageResult(result) {
+  const box = qs('#dwPageResult');
+  if (!box) return;
+
+  if (!result || result.error) {
+    box.className = 'result-empty';
+    box.innerHTML = `<span>⚠️ ${escapeHtml(result && result.error ? result.error : 'Unable to analyze snapshot')}</span>`;
+    return;
+  }
+
+  const suspicious = (result.risk_score || 0) >= 30;
+  const linkPreview = (result.links || []).length
+    ? result.links.map(link => `<div class="issue-item ${suspicious ? 'warn' : 'ok'}">${escapeHtml(link)}</div>`).join('')
+    : '<div class="issue-item ok">No links found in the snapshot.</div>';
+
+  box.className = '';
+  box.innerHTML = `
+    <div class="verdict ${suspicious ? 'threat' : 'safe'}">
+      <span class="verdict-icon">${suspicious ? '⚠️' : '✅'}</span>
+      <div>
+        <div class="verdict-label">${escapeHtml(result.verdict)} PAGE</div>
+        <div class="verdict-sub">${escapeHtml(result.verification)} · Confidence ${result.confidence}%</div>
+      </div>
+    </div>
+    <div class="stat-detail">
+      <div class="sd-item"><div class="sd-label">Title</div><div class="sd-value blue">${escapeHtml(result.title)}</div></div>
+      <div class="sd-item"><div class="sd-label">Page Type</div><div class="sd-value orange">${escapeHtml(result.page_type)}</div></div>
+      <div class="sd-item"><div class="sd-label">Words</div><div class="sd-value blue">${result.word_count}</div></div>
+      <div class="sd-item"><div class="sd-label">Risk</div><div class="sd-value ${suspicious ? 'red' : 'green'}">${result.risk_score}%</div></div>
+    </div>
+    <div class="stat-detail" style="margin-top:10px">
+      <div class="sd-item"><div class="sd-label">Onion Links</div><div class="sd-value blue">${result.onion_links}</div></div>
+      <div class="sd-item"><div class="sd-label">External Links</div><div class="sd-value blue">${result.external_links}</div></div>
+      <div class="sd-item"><div class="sd-label">Suspicious Links</div><div class="sd-value ${suspicious ? 'red' : 'green'}">${result.suspicious_links}</div></div>
+      <div class="sd-item"><div class="sd-label">Signals</div><div class="sd-value orange">${(result.keywords || []).length}</div></div>
+    </div>
+    <div class="issue-item ${suspicious ? 'warn' : 'ok'}">${escapeHtml(result.summary)}</div>
+    <div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap;">
+      ${(result.keywords || []).length ? result.keywords.map(k => `<span class="badge ${suspicious ? 'red' : 'orange'}">${escapeHtml(k)}</span>`).join(' ') : '<span class="badge green">No major signals</span>'}
+    </div>
+    <div style="margin-top:10px;">${linkPreview}</div>
+  `;
+}
 
 function initDWCanvas() {
   const canvas = qs('#dwCanvas');
@@ -422,10 +958,10 @@ function drawIdleGraph(canvas) {
   dwCtx.textAlign = 'center';
   dwCtx.fillText('HUB', W / 2, H / 2 + 4);
   dwCtx.fillStyle = 'rgba(125,133,144,0.5)';
-  dwCtx.fillText('Awaiting scan…', W / 2, H - 10);
+  dwCtx.fillText('Awaiting intel scan…', W / 2, H - 10);
 }
 
-function drawGraph(nodes, canvas) {
+function drawGraph(nodes, canvas, activeNodeId = null) {
   const W = canvas.width, H = canvas.height;
   const cx = W / 2, cy = H / 2;
   dwCtx.clearRect(0, 0, W, H);
@@ -450,91 +986,221 @@ function drawGraph(nodes, canvas) {
 
   nodes.forEach(n => {
     const col = colors[n.level];
-    dwCtx.shadowColor = col; dwCtx.shadowBlur = n.level === 'critical' ? 12 : 5;
+    const isActive = activeNodeId && n.id === activeNodeId;
+    dwCtx.shadowColor = col; dwCtx.shadowBlur = isActive ? 18 : (n.level === 'critical' ? 12 : 5);
     dwCtx.beginPath(); dwCtx.arc(n.x, n.y, n.r, 0, Math.PI * 2);
     dwCtx.fillStyle = col + '20'; dwCtx.fill();
     dwCtx.strokeStyle = col; dwCtx.lineWidth = 1.5; dwCtx.stroke();
     dwCtx.shadowBlur = 0;
     dwCtx.beginPath(); dwCtx.arc(n.x, n.y, n.r * 0.4, 0, Math.PI * 2);
     dwCtx.fillStyle = col; dwCtx.fill();
+    if (isActive) {
+      dwCtx.beginPath();
+      dwCtx.arc(n.x, n.y, n.r + 4, 0, Math.PI * 2);
+      dwCtx.strokeStyle = 'rgba(255,255,255,0.7)';
+      dwCtx.lineWidth = 1;
+      dwCtx.stroke();
+    }
   });
 }
 
 async function runDarkWeb() {
+  const runToken = ++dwRunToken;
   const btn = qs('#dwBtn');
   btn.disabled = true;
   btn.innerHTML = '<span class="spinner"></span>Scanning…';
   qs('#dwFindings').innerHTML = '<div class="result-empty"><span>Scanning…</span></div>';
+  qs('#dwLog').innerHTML = '<div class="log-sys">// Live hidden-service intelligence scan initiated.</div>';
 
   const canvas = qs('#dwCanvas');
   const nodeCount = parseInt(qs('#dwNodes').value);
   const cat = qs('#dwCat').value;
   const kw = qs('#dwKw').value;
+  addLog('dwLog', 'Establishing Tor-style circuit and hidden-service discovery path…', 'log-info');
+  await sleep(250);
 
-  const levelDist = [0.15, 0.25, 0.35, 0.25];
-  const levels = ['critical', 'high', 'medium', 'low'];
-  const nodes = [];
-  const W = canvas.width, H = canvas.height;
-  const cx = W / 2, cy = H / 2;
-  let critCount = 0, highCount = 0;
-  const findings = [];
+  let result = null;
+  const apiOnline = qs('#apiStatus').classList.contains('online');
+  if (apiOnline) {
+    try {
+      const resp = await fetch(`${API}/darkweb/scan`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ category: cat, keywords: kw, nodes: nodeCount })
+      });
+      if (resp.ok) result = await resp.json();
+    } catch (_) { }
+  }
+  if (!result) result = buildDarkWebFallback(cat, kw, nodeCount);
 
-  addLog('dwLog', `Initialising Tor circuit…`, 'log-info');
-  await sleep(400);
-  addLog('dwLog', `Target: ${cat} | Keywords: [${kw}]`, 'log-sys');
-  await sleep(200);
+  addLog('dwLog', `Target: ${cat} | Keywords: [${normalizeDarkWebKeywords(kw).join(', ')}]`, 'log-sys');
+  await sleep(150);
 
-  for (let i = 0; i < nodeCount; i++) {
-    await sleep(70);
-    const angle = ((i / nodeCount) * Math.PI * 2) - Math.PI / 2 + (Math.random() - 0.5) * 0.5;
-    const dist = 55 + Math.random() * 75;
-    const x = cx + Math.cos(angle) * dist;
-    const y = cy + Math.sin(angle) * dist;
-
-    // Weighted random level
-    let r = Math.random(), cum = 0, lIdx = 3;
-    for (let j = 0; j < levelDist.length; j++) { cum += levelDist[j]; if (r < cum) { lIdx = j; break; } }
-    const level = levels[lIdx];
-    const node = { id: `N${(i + 1).toString().padStart(2, '0')}`, x, y, r: 6 + Math.random() * 5, level };
-    nodes.push(node);
-    drawGraph(nodes, canvas);
-
-    if (level === 'critical') critCount++;
-    if (level === 'high') highCount++;
-
-    const lc = { critical: 'log-err', high: 'log-warn', medium: 'log-info', low: 'log-ok' }[level];
-    addLog('dwLog', `Node ${node.id}: ${level.toUpperCase()} — ${fakeHash(6)}.onion`, lc);
-
-    if (level === 'critical' || level === 'high') {
-      findings.push({ level, node: node.id, cat, hash: fakeHash(16) });
-    }
+  const seenNodes = [];
+  const orderedTimeline = Array.isArray(result.timeline) ? result.timeline : [];
+  for (const step of orderedTimeline) {
+    if (runToken !== dwRunToken) return;
+    await sleep(Math.min(step.delay_ms || 220, 420));
+    seenNodes.push(step.node);
+    drawGraph(seenNodes, canvas, step.node.id);
+    addLog('dwLog', step.message, {
+      critical: 'log-err',
+      high: 'log-warn',
+      medium: 'log-info',
+      low: 'log-ok',
+    }[step.level] || 'log-info');
   }
 
-  // Render findings
+  const summary = result.summary || {};
+  const findings = Array.isArray(result.findings) ? result.findings : [];
+  const matchedKeywords = Array.isArray(summary.matched_keywords) ? summary.matched_keywords : normalizeDarkWebKeywords(kw);
+
   if (findings.length === 0) {
-    qs('#dwFindings').innerHTML = '<div class="issue-item ok">✅ No critical threats found in this scan.</div>';
+    qs('#dwFindings').innerHTML = `
+      <div class="stat-detail">
+        <div class="sd-item"><div class="sd-label">Intel Scan ID</div><div class="sd-value blue">${result.scan_id || 'n/a'}</div></div>
+        <div class="sd-item"><div class="sd-label">Avg Risk</div><div class="sd-value green">${summary.average_risk ?? 0}%</div></div>
+        <div class="sd-item"><div class="sd-label">Matched Keywords</div><div class="sd-value blue">${matchedKeywords.length}</div></div>
+        <div class="sd-item"><div class="sd-label">Threats</div><div class="sd-value green">0</div></div>
+      </div>
+      <div class="issue-item ok">✅ No high-confidence threats found in this scan.</div>
+      ${(result.recommendations || []).map(r => `<div class="issue-item warn">⚠️ ${r}</div>`).join('')}`;
   } else {
-    qs('#dwFindings').innerHTML = findings.map(f => `
-      <div class="finding ${f.level}">
-        <div class="finding-header">
-          <span class="badge ${f.level === 'critical' ? 'red' : 'orange'}">${f.level.toUpperCase()}</span>
-          <span>Node ${f.node}</span>
-        </div>
-        <div class="finding-body">
-          Category: ${f.cat}<br>
-          Onion: ${fakeHash(6)}.onion &nbsp;|&nbsp; Hash: ${f.hash}
-        </div>
-      </div>`).join('');
+    qs('#dwFindings').innerHTML = `
+      <div class="stat-detail" style="margin-bottom:12px">
+        <div class="sd-item"><div class="sd-label">Intel Scan ID</div><div class="sd-value blue">${result.scan_id || 'n/a'}</div></div>
+        <div class="sd-item"><div class="sd-label">Critical / High</div><div class="sd-value red">${summary.critical || 0} / ${summary.high || 0}</div></div>
+        <div class="sd-item"><div class="sd-label">Avg Risk</div><div class="sd-value orange">${summary.average_risk ?? 0}%</div></div>
+        <div class="sd-item"><div class="sd-label">Matched Keywords</div><div class="sd-value blue">${matchedKeywords.join(', ') || 'none'}</div></div>
+      </div>
+      ${findings.map(f => `
+        <div class="finding ${f.level}">
+          <div class="finding-header">
+            <span class="badge ${f.level === 'critical' ? 'red' : 'orange'}">${f.level.toUpperCase()}</span>
+            <span>Node ${f.id}</span>
+          </div>
+          <div class="finding-body">
+            Onion: ${f.onion}<br>
+            Activity: ${f.activity}<br>
+            Score: ${f.score}% &nbsp;|&nbsp; Last seen: ${f.last_seen}
+          </div>
+        </div>`).join('')}
+      ${(result.recommendations || []).map(r => `<div class="issue-item warn">⚠️ ${r}</div>`).join('')}`;
   }
 
-  addLog('dwLog', `Scan complete — ${critCount} critical, ${highCount} high threats found`, critCount > 0 ? 'log-err' : 'log-ok');
+  const criticalCount = summary.critical || 0;
+  const highCount = summary.high || 0;
+  const mediumCount = summary.medium || 0;
+  const threatHit = criticalCount + highCount > 0;
+
+  addLog('dwLog', `Scan complete — ${criticalCount} critical, ${highCount} high, ${mediumCount} medium hits`, threatHit ? 'log-err' : 'log-ok');
   state.scans++;
-  critCount > 0 ? state.threats++ : state.safe++;
+  threatHit ? state.threats++ : state.safe++;
+  state.warns += mediumCount;
   updateSidebarStats();
-  dashLog(`[DARKWEB] ${critCount} critical / ${highCount} high nodes in ${cat}`, critCount > 0 ? 'log-err' : 'log-ok');
+  dashLog(`[DARKWEB] ${criticalCount} critical / ${highCount} high / ${mediumCount} medium on ${cat}`, threatHit ? 'log-err' : 'log-ok');
 
   btn.disabled = false;
   btn.innerHTML = 'Start Scan';
+}
+
+async function runDarkWebLink() {
+  const btn = qs('#dwLinkBtn');
+  const input = qs('#dwLink').value.trim();
+  if (!input) {
+    alert('Paste a URL first.');
+    return;
+  }
+
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner"></span>Analyzing…';
+  qs('#dwLinkResult').innerHTML = '<div class="result-empty"><span>Analyzing link…</span></div>';
+
+  addLog('dwLog', `Analyzing link intelligence for ${input}`, 'log-info');
+  await sleep(180);
+
+  let result = null;
+  const apiOnline = qs('#apiStatus').classList.contains('online');
+  if (apiOnline) {
+    try {
+      const resp = await fetch(`${API}/darkweb/link-intel`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ url: input })
+      });
+      result = await resp.json();
+    } catch (_) { }
+  }
+
+  if (!result || result.error) {
+    result = buildDarkWebLinkFallback(input);
+  }
+
+  renderDarkWebLinkResult(result);
+
+  const suspicious = !!result.error || /SUSPICIOUS/.test(result.verdict) || (result.risk_score || 0) >= 35;
+  state.scans++;
+  if (result.error) {
+    state.warns++;
+  } else if (suspicious) {
+    state.threats++;
+  } else {
+    state.safe++;
+  }
+  updateSidebarStats();
+  dashLog(`[DARKWEB LINK] ${result.error ? 'INVALID' : result.verdict} · ${result.host || input}`, suspicious ? 'log-warn' : 'log-ok');
+  addLog('dwLog', `Link verdict: ${result.error ? 'INVALID' : result.verdict} (${result.risk_score ?? 0}%)`, suspicious ? 'log-warn' : 'log-ok');
+
+  btn.disabled = false;
+  btn.innerHTML = 'Analyze Link';
+}
+
+async function runDarkWebPageIntel() {
+  const btn = qs('#dwPageBtn');
+  const source = qs('#dwPageSource').value.trim();
+  const originUrl = qs('#dwPageUrl').value.trim();
+  if (!source) {
+    alert('Paste page source or text first.');
+    return;
+  }
+
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner"></span>Scraping…';
+  qs('#dwPageResult').innerHTML = '<div class="result-empty"><span>Analyzing snapshot…</span></div>';
+
+  addLog('dwLog', `Scraping snapshot content${originUrl ? ` from ${originUrl}` : ''}`, 'log-info');
+  await sleep(180);
+
+  let result = null;
+  const apiOnline = qs('#apiStatus').classList.contains('online');
+  if (apiOnline) {
+    try {
+      const resp = await fetch(`${API}/darkweb/page-intel`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ source, origin_url: originUrl })
+      });
+      result = await resp.json();
+    } catch (_) { }
+  }
+
+  if (!result || result.error) {
+    result = parseDarkWebSnapshot(source);
+  }
+
+  renderDarkWebPageResult(result);
+
+  const suspicious = !!result.error || (result.risk_score || 0) >= 30;
+  state.scans++;
+  if (result.error) state.warns++;
+  else if (suspicious) state.threats++;
+  else state.safe++;
+  updateSidebarStats();
+  dashLog(`[DARKWEB SNAPSHOT] ${result.error ? 'INVALID' : result.verdict} · ${result.page_type || 'n/a'}`, suspicious ? 'log-warn' : 'log-ok');
+  addLog('dwLog', `Snapshot verdict: ${result.error ? 'INVALID' : result.verdict} (${result.risk_score ?? 0}%)`, suspicious ? 'log-warn' : 'log-ok');
+
+  btn.disabled = false;
+  btn.innerHTML = 'Scrape Snapshot';
 }
 
 /* ══════════════════════════════════════════════════════════════════
@@ -672,4 +1338,5 @@ window.addEventListener('load', () => {
   dashLog('Platform initialised. All 4 modules online.', 'log-ok');
   dashLog('Upload an image in Deepfake tab to test the ML model.', 'log-sys');
   updateSidebarStats();
+  setupPWA();
 });
