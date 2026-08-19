@@ -1,5 +1,5 @@
-const STATIC_CACHE = 'cyberforensics-static-v1';
-const RUNTIME_CACHE = 'cyberforensics-runtime-v1';
+const STATIC_CACHE = 'cyberforensics-static-v2';
+const RUNTIME_CACHE = 'cyberforensics-runtime-v2';
 const STATIC_ASSETS = [
     './',
     './index.html',
