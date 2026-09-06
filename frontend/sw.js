@@ -1,5 +1,5 @@
-const STATIC_CACHE = 'cyberforensics-static-v2';
-const RUNTIME_CACHE = 'cyberforensics-runtime-v2';
+const STATIC_CACHE = 'cyberforensics-static-v3';
+const RUNTIME_CACHE = 'cyberforensics-runtime-v3';
 const STATIC_ASSETS = [
     './',
     './index.html',
@@ -50,6 +50,21 @@ self.addEventListener('fetch', event => {
                     return (await cache.match(req)) ||
                         (await caches.match('./index.html'));
                 })
+        );
+        return;
+    }
+
+    // Always check for updated application code first. Cached JavaScript can
+    // otherwise keep an old auth flow active after deployment.
+    if (req.url.endsWith('/app.js') || req.url.endsWith('/style.css')) {
+        event.respondWith(
+            fetch(req)
+                .then(resp => {
+                    const copy = resp.clone();
+                    caches.open(STATIC_CACHE).then(cache => cache.put(req, copy));
+                    return resp;
+                })
+                .catch(() => caches.match(req))
         );
         return;
     }

@@ -18,6 +18,7 @@ const supabaseConfigured = SUPABASE_URL.startsWith('https://') &&
   !SUPABASE_ANON_KEY.includes('YOUR_SUPABASE_ANON_KEY');
 let supabaseClient = null;
 let supabaseInitError = '';
+let authReady = false;
 
 if (supabaseConfigured && window.supabase) {
   try {
@@ -138,15 +139,20 @@ async function initAuth() {
   } else {
     showAuthScreen();
   }
+  authReady = true;
 
-  supabaseClient.auth.onAuthStateChange(async (_event, sessionState) => {
-    if (sessionState?.user) {
-      const profile = await loadUserProfile(sessionState.user);
-      showAuthenticatedApp(sessionState.user, profile);
-      await loadUserStats();
-    } else {
-      showAuthScreen();
-    }
+  supabaseClient.auth.onAuthStateChange((_event, sessionState) => {
+    // Let Supabase finish writing/removing its persisted session before
+    // reading profile data or changing the visible application shell.
+    setTimeout(async () => {
+      if (sessionState?.user) {
+        const profile = await loadUserProfile(sessionState.user);
+        showAuthenticatedApp(sessionState.user, profile);
+        await loadUserStats();
+      } else if (authReady) {
+        showAuthScreen();
+      }
+    }, 0);
   });
 }
 
