@@ -102,61 +102,282 @@ def health():
 
 @app.route('/api/detect', methods=['POST'])
 def detect():
+
     start = time.time()
+
     data = request.get_json()
+
     if not data or 'image' not in data:
-        return jsonify({'error': 'No image provided'}), 400
+        return jsonify({
+            'error': 'No image provided'
+        }), 400
 
     try:
+
+        # ── Decode image ─────────────────────────────────────
+
         b64 = data['image']
+
         if ',' in b64:
             b64 = b64.split(',')[1]
-        img_bytes = base64.b64decode(b64)
-        img = Image.open(io.BytesIO(img_bytes))
 
-        feats = extract_features(img).reshape(1, -1)   # shape: (1, 34)
-        feats_scaled = scaler.transform(feats)          # scale before predicting
-        pred  = model.predict(feats_scaled)[0]
-        proba = model.predict_proba(feats_scaled)[0]
+        img_bytes = base64.b64decode(b64)
+
+        img = Image.open(
+            io.BytesIO(img_bytes)
+        ).convert('RGB')
+
+
+        # ── Extract 34 features ──────────────────────────────
+
+        feats = extract_features(img).reshape(1, -1)
+
+        print("Extracted feature shape:", feats.shape)
+        print("Scaler expects:", scaler.n_features_in_)
+
+        expected_features = scaler.n_features_in_
+
+        if feats.shape[1] != expected_features:
+            raise ValueError(
+                f"Expected {expected_features} features, got {feats.shape[1]}"
+            )
+
+
+        # ── Scale features ───────────────────────────────────
+
+        feats_scaled = scaler.transform(feats)
+
+
+        # ── XGBoost prediction ───────────────────────────────
+
+        pred = model.predict(
+            feats_scaled
+        )[0]
+
+        proba = model.predict_proba(
+            feats_scaled
+        )[0]
 
         fake_pct = float(proba[1]) * 100
+
         real_pct = float(proba[0]) * 100
 
-        # Feature breakdown for UI display
-        # Use original unscaled feats for display values (more interpretable)
-        ela_mean  = float(feats[0, 3])    # ELA mean
-        hf_ratio  = float(feats[0, 0])    # HF/LF ratio
-        edge_mean = float(feats[0, 12])   # edge mean
-        tex_var   = float(feats[0, 15])   # texture variance
-        col_corr  = float(feats[0, 7])    # R-G correlation
 
-        # Normalise feature signals to 0-100 for UI
+        # ── Feature values ───────────────────────────────────
+
+        ela_mean = float(feats[0, 3])
+
+        hf_ratio = float(feats[0, 0])
+
+        edge_mean = float(feats[0, 12])
+
+        tex_var = float(feats[0, 15])
+
+        col_corr = float(feats[0, 7])
+
+
+        # ── Normalize to 0–100 ───────────────────────────────
+
         def sig(val, low, high):
-            return min(100, max(0, (val - low) / (high - low) * 100))
+
+            return min(
+                100,
+                max(
+                    0,
+                    (val - low) /
+                    (high - low) * 100
+                )
+            )
+
+
+        # ── Feature display ──────────────────────────────────
 
         features_display = {
-            'ELA Artifact Level':    round(sig(ela_mean, 3, 20), 1),
-            'Frequency Anomaly':     round(sig(hf_ratio, 0.6, 1.8), 1),
-            'Edge Inconsistency':    round(sig(18 - edge_mean, 0, 10), 1),
-            'Texture Uniformity':    round(sig(500 - tex_var, 0, 300), 1),
-            'Color Ch. Deviation':   round(sig(1 - col_corr, 0, 0.4) * 100 / 100 * 100, 1),
+
+            'ELA Artifact Level':
+                round(
+                    sig(ela_mean, 3, 20),
+                    1
+                ),
+
+            'Frequency Anomaly':
+                round(
+                    sig(hf_ratio, 0.6, 1.8),
+                    1
+                ),
+
+            'Edge Inconsistency':
+                round(
+                    sig(
+                        18 - edge_mean,
+                        0,
+                        10
+                    ),
+                    1
+                ),
+
+            'Texture Uniformity':
+                round(
+                    sig(
+                        500 - tex_var,
+                        0,
+                        300
+                    ),
+                    1
+                ),
+
+            'Color Ch. Deviation':
+                round(
+                    sig(
+                        1 - col_corr,
+                        0,
+                        0.4
+                    ),
+                    1
+                )
         }
 
-        elapsed = round((time.time() - start) * 1000, 1)
+
+        # ══════════════════════════════════════════════════════
+        # HYBRID ANOMALY DECISION
+        # ══════════════════════════════════════════════════════
+
+        signals = list(
+            features_display.values()
+        )
+
+
+        # Number of anomalies >= 75%
+
+        high_anomalies = sum(
+            value >= 75
+            for value in signals
+        )
+
+
+        # Strongest anomaly
+
+        strongest_anomaly = max(
+            signals
+        )
+
+
+        # ── Default: Trust XGBoost ────────────────────────────
+
+        verdict = (
+            'FAKE'
+            if pred == 1
+            else 'REAL'
+        )
+
+
+        # ── Forensic Override ─────────────────────────────────
+
+        # CASE 1:
+        # Two or more strong anomalies.
+        # This is much safer than forcing FAKE
+        # because of only one abnormal feature.
+
+        if high_anomalies >= 2:
+
+            verdict = 'FAKE'
+
+            forensic_score = strongest_anomaly
+
+            fake_pct = max(
+                fake_pct,
+                forensic_score
+            )
+
+            real_pct = 100 - fake_pct
+
+
+        # CASE 2:
+        # One EXTREMELY high anomaly (95%+)
+        # but only override if model is NOT strongly
+        # confident that the image is real.
+
+        elif (
+            strongest_anomaly >= 95
+            and real_pct < 75
+        ):
+
+            verdict = 'FAKE'
+
+            fake_pct = max(
+                fake_pct,
+                strongest_anomaly
+            )
+
+            real_pct = 100 - fake_pct
+
+
+        # CASE 3:
+        # Otherwise leave XGBoost decision unchanged
+
+
+        # ── Final confidence ──────────────────────────────────
+
+        confidence = max(
+            fake_pct,
+            real_pct
+        )
+
+
+        # ── Processing time ───────────────────────────────────
+
+        elapsed = round(
+            (time.time() - start) * 1000,
+            1
+        )
+
+
+        # ── Return result ─────────────────────────────────────
 
         return jsonify({
-            'verdict':    'FAKE' if pred == 1 else 'REAL',
-            'fake_pct':   round(fake_pct, 1),
-            'real_pct':   round(real_pct, 1),
-            'confidence': round(max(fake_pct, real_pct), 1),
-            'features':   features_display,
-            'time_ms':    elapsed,
-            'model':      'XGBoost-v1'
+
+            'verdict':
+                verdict,
+
+            'fake_pct':
+                round(fake_pct, 1),
+
+            'real_pct':
+                round(real_pct, 1),
+
+            'confidence':
+                round(confidence, 1),
+
+            'high_anomalies':
+                high_anomalies,
+
+            'strongest_anomaly':
+                round(
+                    strongest_anomaly,
+                    1
+                ),
+
+            'features':
+                features_display,
+
+            'time_ms':
+                elapsed,
+
+            'model':
+                'XGBoost-v1 + Forensic Analysis'
         })
 
-    except Exception as e:
-        return jsonify({'error': str(e)}), 500
 
+    except Exception as e:
+
+        print(
+            "Detection error:",
+            str(e)
+        )
+
+        return jsonify({
+            'error': str(e)
+        }), 500
 
 CB_LABEL_COLS = ['toxic', 'severe_toxic', 'obscene', 'threat', 'insult', 'identity_hate']
 CB_RULEBOOK = {

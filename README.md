@@ -30,6 +30,16 @@ project/
 
 ## Setup & Run
 
+### Supabase authentication setup
+
+1. Create a Supabase project.
+2. Open `SUPABASE_SETUP.sql`, run the complete script in **Supabase Dashboard → SQL Editor**.
+3. In `frontend/js/app.js`, replace `SUPABASE_URL` and `SUPABASE_ANON_KEY` with the values from **Project Settings → API**. Use the browser-safe publishable/anon key, never a service-role key.
+4. In **Authentication → URL Configuration**, add the URL from which you serve `frontend/index.html` to **Site URL** and **Redirect URLs**.
+5. Serve the frontend over HTTP (for example with `python -m http.server 5500` inside `frontend`) instead of opening the file directly.
+
+The app now requires a Supabase account before showing the forensic modules. Sign-up saves full name, phone, organisation, and role in `profiles`; dashboard scan totals are isolated per user in `user_stats` and persist across devices. Supabase Auth securely hashes and manages passwords; passwords must not be SHA-hashed or stored in the frontend.
+
 ### Step 1 — Install Python dependencies
 ```bash
 cd backend

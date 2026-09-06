@@ -6,6 +6,151 @@
 const API = 'https://major-project-te5y.onrender.com/api';
 
 /* ══════════════════════════════════════════════════════════════════
+   SUPABASE AUTH
+   Replace these two values with Project Settings > API values.
+   The publishable/anon key is safe in browser code when RLS is enabled.
+══════════════════════════════════════════════════════════════════ */
+const SUPABASE_URL = 'https://qkcvtdawcrcnnlrwuakf.supabase.co'.trim();
+const SUPABASE_ANON_KEY = 'sb_publishable_LFDf_RID-Ohw9ujx84C8uw_x9dN11Xt'.trim();
+const supabaseConfigured = SUPABASE_URL.startsWith('https://') &&
+  !SUPABASE_URL.includes('YOUR_PROJECT_REF') &&
+  SUPABASE_ANON_KEY.length > 20 &&
+  !SUPABASE_ANON_KEY.includes('YOUR_SUPABASE_ANON_KEY');
+let supabaseClient = null;
+let supabaseInitError = '';
+
+if (supabaseConfigured && window.supabase) {
+  try {
+    supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+  } catch (error) {
+    supabaseInitError = error?.message || 'Supabase could not be initialized.';
+    console.error('Supabase initialization failed:', error);
+  }
+}
+let currentUser = null;
+
+function authMessage(message, success = false) {
+  const el = qs('#authMessage');
+  if (!el) return;
+  el.textContent = message;
+  el.className = `auth-message${success ? ' success' : ''}`;
+}
+
+function readableAuthError(error, action) {
+  const message = String(error?.message || error || '');
+  const lower = message.toLowerCase();
+  if (lower.includes('rate limit') || lower.includes('too many requests')) {
+    return 'Supabase email limit reached. Wait for the limit to reset, or disable email confirmation for testing / configure custom SMTP in Supabase.';
+  }
+  if (action === 'login' && (lower.includes('invalid login credentials') || lower.includes('user not found'))) {
+    return 'No confirmed account was found for this email. Complete signup and email confirmation first, then log in.';
+  }
+  if (lower.includes('email not confirmed')) {
+    return 'Confirm your email from the Supabase message before logging in.';
+  }
+  return message || 'Authentication failed. Check your Supabase Auth settings.';
+}
+
+function setAuthMode(mode) {
+  const login = mode === 'login';
+  qs('#loginForm').style.display = login ? 'grid' : 'none';
+  qs('#signupForm').style.display = login ? 'none' : 'grid';
+  qs('#loginTabBtn').classList.toggle('active', login);
+  qs('#signupTabBtn').classList.toggle('active', !login);
+  authMessage('');
+}
+window.setAuthMode = setAuthMode;
+
+function showAuthenticatedApp(user, profile = null) {
+  currentUser = user;
+  qs('#authScreen').style.display = 'none';
+  qs('#appShell').style.display = 'block';
+  const name = profile?.full_name || user.user_metadata?.full_name || user.email?.split('@')[0] || 'User';
+  qs('#userGreeting').textContent = `Signed in as ${name}`;
+}
+
+function showAuthScreen() {
+  currentUser = null;
+  qs('#appShell').style.display = 'none';
+  qs('#authScreen').style.display = 'flex';
+}
+
+async function loadUserProfile(user) {
+  if (!supabaseClient || !user) return null;
+  const { data, error } = await supabaseClient.from('profiles').select('full_name, organisation, role').eq('id', user.id).maybeSingle();
+  if (error) {
+    console.error('Profile load failed:', error.message);
+    return null;
+  }
+  return data;
+}
+
+async function loadUserStats() {
+  if (!supabaseClient || !currentUser) return;
+  const { data, error } = await supabaseClient.from('user_stats').select('scans, threats, warns, safe').eq('user_id', currentUser.id).maybeSingle();
+  if (error) {
+    console.error('Stats load failed:', error.message);
+    return;
+  }
+  if (data) {
+    state.scans = data.scans || 0;
+    state.threats = data.threats || 0;
+    state.warns = data.warns || 0;
+    state.safe = data.safe || 0;
+    updateSidebarStats();
+  }
+}
+
+async function persistUserStats() {
+  if (!supabaseClient || !currentUser) return;
+  const { error } = await supabaseClient.from('user_stats').upsert({
+    user_id: currentUser.id,
+    scans: state.scans,
+    threats: state.threats,
+    warns: state.warns,
+    safe: state.safe,
+    updated_at: new Date().toISOString()
+  });
+  if (error) console.error('Stats save failed:', error.message);
+}
+
+function recordScan(kind) {
+  state.scans++;
+  if (kind === 'threat') state.threats++;
+  if (kind === 'safe') state.safe++;
+  if (kind === 'warn') state.warns++;
+  updateSidebarStats();
+  persistUserStats();
+}
+
+async function initAuth() {
+  if (!supabaseClient) {
+    showAuthScreen();
+    authMessage(supabaseInitError || 'Add your Supabase URL and anon key in frontend/js/app.js before using the app.');
+    return;
+  }
+
+  const { data: { session } } = await supabaseClient.auth.getSession();
+  if (session?.user) {
+    const profile = await loadUserProfile(session.user);
+    showAuthenticatedApp(session.user, profile);
+    await loadUserStats();
+  } else {
+    showAuthScreen();
+  }
+
+  supabaseClient.auth.onAuthStateChange(async (_event, sessionState) => {
+    if (sessionState?.user) {
+      const profile = await loadUserProfile(sessionState.user);
+      showAuthenticatedApp(sessionState.user, profile);
+      await loadUserStats();
+    } else {
+      showAuthScreen();
+    }
+  });
+}
+
+/* ══════════════════════════════════════════════════════════════════
    GLOBAL STATE & HELPERS
 ══════════════════════════════════════════════════════════════════ */
 const state = { scans: 0, threats: 0, warns: 0, safe: 0 };
@@ -335,9 +480,7 @@ async function runDeepfake() {
   addLog('dfLog', `Verdict: ${result.verdict} (${result.fake_pct.toFixed(1)}% fake)`, isFake ? 'log-err' : 'log-ok');
 
   // Update global stats
-  state.scans++;
-  isFake ? state.threats++ : state.safe++;
-  updateSidebarStats();
+  recordScan(isFake ? 'threat' : 'safe');
   dashLog(`[DEEPFAKE] ${result.verdict} — ${result.fake_pct.toFixed(1)}% fake probability`, isFake ? 'log-err' : 'log-ok');
 
   btn.disabled = false;
@@ -477,9 +620,7 @@ async function runCyberbully() {
   }).join(' ');
   qs('#cbAttention').innerHTML = attnHtml;
 
-  state.scans++;
-  isToxic ? state.threats++ : state.safe++;
-  updateSidebarStats();
+  recordScan(isToxic ? 'threat' : 'safe');
   dashLog(`[CYBERBULLY] ${result.verdict} on ${platform} (${result.score.toFixed(1)}%)`, isToxic ? 'log-err' : 'log-ok');
 }
 
@@ -1094,10 +1235,12 @@ async function runDarkWeb() {
   const threatHit = criticalCount + highCount > 0;
 
   addLog('dwLog', `Scan complete — ${criticalCount} critical, ${highCount} high, ${mediumCount} medium hits`, threatHit ? 'log-err' : 'log-ok');
-  state.scans++;
-  threatHit ? state.threats++ : state.safe++;
-  state.warns += mediumCount;
-  updateSidebarStats();
+  recordScan(threatHit ? 'threat' : 'safe');
+  if (mediumCount > 0) {
+    state.warns += mediumCount;
+    updateSidebarStats();
+    persistUserStats();
+  }
   dashLog(`[DARKWEB] ${criticalCount} critical / ${highCount} high / ${mediumCount} medium on ${cat}`, threatHit ? 'log-err' : 'log-ok');
 
   btn.disabled = false;
@@ -1139,15 +1282,7 @@ async function runDarkWebLink() {
   renderDarkWebLinkResult(result);
 
   const suspicious = !!result.error || /SUSPICIOUS/.test(result.verdict) || (result.risk_score || 0) >= 35;
-  state.scans++;
-  if (result.error) {
-    state.warns++;
-  } else if (suspicious) {
-    state.threats++;
-  } else {
-    state.safe++;
-  }
-  updateSidebarStats();
+  recordScan(result.error ? 'warn' : suspicious ? 'threat' : 'safe');
   dashLog(`[DARKWEB LINK] ${result.error ? 'INVALID' : result.verdict} · ${result.host || input}`, suspicious ? 'log-warn' : 'log-ok');
   addLog('dwLog', `Link verdict: ${result.error ? 'INVALID' : result.verdict} (${result.risk_score ?? 0}%)`, suspicious ? 'log-warn' : 'log-ok');
 
@@ -1191,11 +1326,7 @@ async function runDarkWebPageIntel() {
   renderDarkWebPageResult(result);
 
   const suspicious = !!result.error || (result.risk_score || 0) >= 30;
-  state.scans++;
-  if (result.error) state.warns++;
-  else if (suspicious) state.threats++;
-  else state.safe++;
-  updateSidebarStats();
+  recordScan(result.error ? 'warn' : suspicious ? 'threat' : 'safe');
   dashLog(`[DARKWEB SNAPSHOT] ${result.error ? 'INVALID' : result.verdict} · ${result.page_type || 'n/a'}`, suspicious ? 'log-warn' : 'log-ok');
   addLog('dwLog', `Snapshot verdict: ${result.error ? 'INVALID' : result.verdict} (${result.risk_score ?? 0}%)`, suspicious ? 'log-warn' : 'log-ok');
 
@@ -1324,9 +1455,7 @@ async function runLogTamper() {
   qs('#ltIssues').innerHTML = iHtml;
 
   addLog('ltLog2', `Verdict: ${result.verdict} — ${result.issues.length} issue(s)`, tampered ? 'log-err' : 'log-ok');
-  state.scans++;
-  tampered ? state.threats++ : state.safe++;
-  updateSidebarStats();
+  recordScan(tampered ? 'threat' : 'safe');
   dashLog(`[LOG TAMPER] ${result.verdict} — ${result.issues.length} anomalies`, tampered ? 'log-err' : 'log-ok');
 }
 
@@ -1334,9 +1463,64 @@ async function runLogTamper() {
    INIT
 ══════════════════════════════════════════════════════════════════ */
 window.addEventListener('load', () => {
+  qs('#loginTabBtn').addEventListener('click', () => setAuthMode('login'));
+  qs('#signupTabBtn').addEventListener('click', () => setAuthMode('signup'));
+  qs('#logoutBtn').addEventListener('click', async () => {
+    if (supabaseClient) await supabaseClient.auth.signOut();
+  });
+  qs('#loginForm').addEventListener('submit', async event => {
+    event.preventDefault();
+    if (!supabaseClient) return;
+    const button = event.submitter;
+    button.disabled = true;
+    authMessage('Signing in…');
+    const { error } = await supabaseClient.auth.signInWithPassword({
+      email: qs('#loginEmail').value.trim(),
+      password: qs('#loginPassword').value
+    });
+    button.disabled = false;
+    if (error) authMessage(readableAuthError(error, 'login'));
+  });
+  qs('#signupForm').addEventListener('submit', async event => {
+    event.preventDefault();
+    if (!supabaseClient) return;
+    const password = qs('#signupPassword').value;
+    if (password !== qs('#signupPasswordConfirm').value) {
+      authMessage('Passwords do not match.');
+      return;
+    }
+    const button = event.submitter;
+    button.disabled = true;
+    authMessage('Creating your account…');
+    const name = qs('#signupName').value.trim();
+    const { data, error } = await supabaseClient.auth.signUp({
+      email: qs('#signupEmail').value.trim(),
+      password,
+      options: {
+        data: {
+          full_name: name,
+          phone: qs('#signupPhone').value.trim(),
+          organisation: qs('#signupOrganisation').value.trim(),
+          role: qs('#signupRole').value.trim()
+        }
+      }
+    });
+    button.disabled = false;
+    if (error) {
+      authMessage(readableAuthError(error, 'signup'));
+    } else if (data.session) {
+      authMessage('Account created. Loading your workspace…', true);
+    } else {
+      authMessage('Account created. Check your email to confirm, then log in.', true);
+      setAuthMode('login');
+    }
+  });
   initDWCanvas();
-  dashLog('Platform initialised. All 4 modules online.', 'log-ok');
-  dashLog('Upload an image in Deepfake tab to test the ML model.', 'log-sys');
-  updateSidebarStats();
+  if (supabaseConfigured) {
+    dashLog('Platform initialised. All 4 modules online.', 'log-ok');
+    dashLog('Upload an image in Deepfake tab to test the ML model.', 'log-sys');
+    updateSidebarStats();
+  }
   setupPWA();
+  initAuth();
 });
