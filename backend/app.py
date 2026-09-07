@@ -384,11 +384,15 @@ CB_RULEBOOK = {
     'toxic': [
         ('nobody likes you', 0.78), ('you are useless', 0.76), ('you are trash', 0.74),
         ('worthless', 0.7), ('disgusting', 0.62), ('pathetic', 0.58), ('freak', 0.58),
-        ('shut up', 0.52), ('go away', 0.5), ('hate you', 0.7)
+        ('shut up', 0.52), ('go away', 0.5), ('hate you', 0.82),
+        ('i hate you', 0.9), ("don't like you", 0.68), ('do not like you', 0.68),
+        ('i dislike you', 0.68), ('i cannot stand you', 0.78)
     ],
     'severe_toxic': [
         ('kill yourself', 1.0), ('go die', 0.95), ('die', 0.78), ('burn in hell', 0.9),
-        ('drop dead', 0.9), ('i will kill', 1.0), ('you should not exist', 0.88)
+        ('drop dead', 0.9), ('i will kill', 1.0), ("i'll kill", 1.0),
+        ('going to kill you', 1.0), ('gonna kill you', 1.0),
+        ('you should not exist', 0.88)
     ],
     'obscene': [
         ('fuck', 0.85), ('fucking', 0.84), ('motherfucker', 0.96), ('shit', 0.62),
@@ -397,7 +401,9 @@ CB_RULEBOOK = {
     'threat': [
         ('find out where you live', 1.0), ('make you regret', 0.95), ('you will pay', 0.9),
         ('i will hurt you', 0.96), ('i will find you', 0.95), ('i am coming for you', 0.96),
-        ('destroy you', 0.86), ('beat you up', 0.9)
+        ('i will hit you', 0.94), ("i'll hit you", 0.94), ('hit you', 0.88),
+        ('hurt you', 0.94), ('beat you up', 0.9), ('torture you', 1.0),
+        ('kidnap you', 1.0), ('destroy you', 0.86)
     ],
     'insult': [
         ('ugly', 0.6), ('stupid', 0.56), ('idiot', 0.62), ('moron', 0.62),
@@ -405,9 +411,25 @@ CB_RULEBOOK = {
     ],
     'identity_hate': [
         ('go back to your country', 1.0), ('you people are', 0.78), ('your kind', 0.82),
-        ('religion is garbage', 0.9), ('race should be banned', 1.0), ('dirty immigrant', 1.0)
+        ('religion is garbage', 0.9), ('race should be banned', 1.0), ('dirty immigrant', 1.0),
+        ('your race is disgusting', 1.0), ('your religion is disgusting', 1.0),
+        ('people like you should leave', 0.9), ('we do not want your kind', 0.95),
+        ('you do not belong here', 0.95), ('your people are filthy', 1.0)
     ]
 }
+CB_CONTEXT_RULES = [
+    (r'\b(?:i\s*(?:am|m|will|ll)|im|ill|i am going to|i\'m going to|gonna|we will)\s+'
+     r'(?:kill|hurt|hit|beat|attack|torture|kidnap)\s+(?:you|u)\b', 'threat', 1.0,
+     'future/direct threat'),
+    (r'\b(?:kill|hurt|hit|beat|attack|torture|kidnap)\s+(?:you|u)\b', 'threat', 0.98,
+     'direct threat'),
+    (r'\b(?:tonight|today|soon|right now)\b.*\b(?:kill|hurt|hit|beat|attack|torture|kidnap)\b',
+     'threat', 1.0, 'time-bound threat'),
+    (r"\b(?:i\s+(?:do not|dont|don't)\s+(?:really\s+)?like|i\s+dislike|i\s+cannot\s+stand)\s+you\b",
+     'toxic', 0.95, 'direct hostility'),
+    (r'\b(?:go back|leave|ban)\b.*\b(?:country|religion|race|immigrant|people|kind)\b',
+     'identity_hate', 0.95, 'identity-targeting hostility'),
+]
 CB_POSITIVE_HINTS = [
     'great work', 'nice work', 'well done', 'thank you', 'thanks',
     'proud of you', 'happy for you', 'good job', 'keep it up', 'appreciate it'
@@ -450,6 +472,12 @@ def cb_clean_text(text: str) -> str:
     if not isinstance(text, str):
         return ''
     text = text.lower()
+    text = re.sub(r"\b(can'?t)\b", 'cannot', text)
+    text = re.sub(r"\b(dont|don’t)\b", "don't", text)
+    text = re.sub(r"\b(im|i’m)\b", "i'm", text)
+    text = re.sub(r"\b(ill|i’ll)\b", "i'll", text)
+    text = re.sub(r"\b(ur|u)\b", 'you', text)
+    text = re.sub(r"\bgonna\b", 'going to', text)
     text = re.sub(r'https?://\\S+', ' url ', text)
     text = re.sub(r'@\\w+', ' user ', text)
     text = re.sub(r'\\n', ' ', text)
@@ -475,6 +503,10 @@ def cb_rule_scores(cleaned: str):
                 adj = weight * (0.35 if cb_negated(cleaned, phrase) else 1.0)
                 scores[label] += adj
                 matches.append((phrase, label))
+    for pattern, label, weight, display in CB_CONTEXT_RULES:
+        if re.search(pattern, cleaned):
+            scores[label] += weight
+            matches.append((display, label))
     for lbl in scores:
         scores[lbl] = min(1.0, max(0.0, scores[lbl]))
     return scores, matches

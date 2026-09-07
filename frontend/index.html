@@ -240,6 +240,36 @@
                 highlighted</small></h3>
             <div id="cbAttention" class="attention-box"></div>
           </div>
+
+          <div class="card whatsapp-monitor-card">
+            <h3 class="card-title">WhatsApp Live Monitor</h3>
+            <p class="section-label">
+              Connect your own WhatsApp account with WhatsApp Web. Incoming messages are analysed with the same
+              cyberbullying classifier; message text is kept only in this browser session.
+            </p>
+            <label class="consent-row">
+              <input type="checkbox" id="waConsent" />
+              <span>I authorize this account and understand that monitoring should be used only with the account
+                holder's consent.</span>
+            </label>
+            <div class="whatsapp-controls">
+              <div>
+                <div id="waStatus" class="wa-status">Bridge offline</div>
+                <div id="waAccount" class="section-label" style="margin-top:4px"></div>
+              </div>
+              <div class="chip-row">
+                <button class="btn-primary" id="waConnectBtn" type="button">Show QR code</button>
+                <button class="btn-secondary" id="waLogoutBtn" type="button" disabled>Disconnect</button>
+              </div>
+            </div>
+            <div id="waQrPanel" class="wa-qr-panel" style="display:none">
+              <img id="waQr" alt="WhatsApp Web login QR code" />
+              <p class="section-label">Open WhatsApp → Linked devices → Link a device, then scan this code.</p>
+            </div>
+            <div id="waEvents" class="wa-events">
+              <div class="result-empty"><span>Connect WhatsApp to see incoming analysis results.</span></div>
+            </div>
+          </div>
         </section>
 
         <!-- ═══════════════════════════════════════════════════

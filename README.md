@@ -22,6 +22,9 @@ project/
 │   ├── app.py              ← Flask API with ML model
 │   ├── model.pkl           ← Trained XGBoost-v1 model
 │   └── requirements.txt    ← Python dependencies
+├── whatsapp/
+│   ├── server.js           ← Consent-based WhatsApp Web bridge
+│   └── package.json        ← Node.js dependencies
 │
 └── README.md
 ```
@@ -60,6 +63,24 @@ You should see:
 Open `frontend/index.html` in any browser.
 
 The status indicator in the top-right shows **API Online** when connected.
+
+### Optional — WhatsApp live cyberbullying monitor
+
+The Cyberbullying tab can connect a WhatsApp account through WhatsApp Web. This requires the account holder's
+explicit authorization: check the consent box, click **Show QR code**, and scan it from WhatsApp → Linked devices.
+Incoming messages are sent to the existing `/api/cyberbully` classifier and displayed as live alerts. The bridge keeps
+only the latest 100 analysis events in memory; it does not write message contents to disk.
+
+```bash
+cd whatsapp
+npm install
+npx puppeteer browsers install chrome  # only needed if Chrome is not installed
+npm start
+```
+
+Start the Flask API first, then start the bridge and open the Cyberbullying tab. The bridge uses port `10001` and
+the classifier uses `10000`. WhatsApp Web authentication data is stored locally in `whatsapp/.wwebjs_auth/` and is
+ignored by Git; disconnect the account from the UI when finished.
 
 ---
 

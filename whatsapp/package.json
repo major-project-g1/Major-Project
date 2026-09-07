@@ -1,0 +1,16 @@
+{
+  "name": "cyberforensics-whatsapp-bridge",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Consent-based WhatsApp Web bridge for live cyberbullying analysis",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "cors": "^2.8.5",
+    "express": "^4.21.2",
+    "qrcode": "^1.5.4",
+    "whatsapp-web.js": "^1.26.0"
+  }
+}

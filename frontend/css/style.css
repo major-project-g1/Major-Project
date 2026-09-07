@@ -790,6 +790,76 @@ input[type=range] {
   word-break: break-word;
 }
 
+.consent-row {
+  display: flex;
+  gap: 9px;
+  align-items: flex-start;
+  color: var(--muted);
+  font-size: 0.76rem;
+  margin: 14px 0;
+}
+
+.consent-row input {
+  margin-top: 4px;
+  accent-color: var(--blue);
+}
+
+.whatsapp-controls {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface2);
+}
+
+.wa-status {
+  color: var(--muted);
+  font: 0.76rem var(--mono);
+}
+
+.wa-status.connected { color: var(--green); }
+.wa-status.waiting { color: var(--yellow); }
+.wa-status.error { color: var(--red); }
+
+.wa-qr-panel {
+  text-align: center;
+  padding: 18px 0 4px;
+}
+
+.wa-qr-panel img {
+  width: 280px;
+  max-width: 100%;
+  background: #fff;
+  padding: 8px;
+  border-radius: 8px;
+}
+
+.wa-events {
+  display: grid;
+  gap: 8px;
+  margin-top: 14px;
+  max-height: 360px;
+  overflow-y: auto;
+}
+
+.wa-event {
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: #0a0f1a;
+  font-size: 0.78rem;
+}
+
+.wa-event.toxic { border-color: rgba(248, 81, 73, 0.65); }
+.wa-event-head { display: flex; justify-content: space-between; gap: 8px; color: var(--muted); font-size: 0.7rem; }
+.wa-event-head strong { color: var(--text); }
+.wa-event-text { margin-top: 5px; word-break: break-word; }
+.wa-event-labels, .wa-event-highlights { margin-top: 6px; color: var(--muted); font-size: 0.7rem; }
+.wa-highlight { display: inline-block; margin: 2px 3px 0 0; padding: 1px 5px; border-radius: 4px; color: var(--orange); background: rgba(240, 136, 62, 0.15); }
+
 /* ── Log boxes ──────────────────────────────────────────────────── */
 .log-box {
   background: #0a0f1a;

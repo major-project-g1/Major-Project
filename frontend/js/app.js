@@ -630,6 +630,107 @@ async function runCyberbully() {
   dashLog(`[CYBERBULLY] ${result.verdict} on ${platform} (${result.score.toFixed(1)}%)`, isToxic ? 'log-err' : 'log-ok');
 }
 
+/* ── WhatsApp consent-based live monitoring ─────────────────────── */
+const WHATSAPP_API = 'http://localhost:10001/api';
+let waPollTimer = null;
+let waLastSequence = 0;
+
+function waSetStatus(text, cls = '') {
+  const el = qs('#waStatus');
+  if (!el) return;
+  el.textContent = text;
+  el.className = `wa-status${cls ? ` ${cls}` : ''}`;
+}
+
+function renderWhatsAppEvent(event) {
+  const box = qs('#waEvents');
+  if (!box) return;
+  if (box.querySelector('.result-empty')) box.innerHTML = '';
+  const item = document.createElement('div');
+  item.className = `wa-event ${event.result?.verdict === 'TOXIC' ? 'toxic' : ''}`;
+  const time = new Date(event.timestamp).toLocaleTimeString('en-IN', { hour12: false });
+  if (event.type === 'message') {
+    const result = event.result || {};
+    const labelSummary = Object.entries(result.labels || {})
+      .map(([name, value]) => `${escapeHtml(name)}: ${Number(value).toFixed(1)}%`)
+      .join(' · ');
+    const highlights = (result.highlights || [])
+      .map(value => `<span class="wa-highlight">${escapeHtml(value)}</span>`)
+      .join(' ');
+    item.innerHTML = `
+      <div class="wa-event-head"><strong>${escapeHtml(event.sender || event.from || 'Incoming message')}</strong>
+      <span>${time} · ${escapeHtml(result.verdict || 'ANALYSED')} ${Number(result.score || 0).toFixed(1)}%</span></div>
+      <div class="wa-event-text">${escapeHtml(event.text || '')}</div>
+      <div class="wa-event-labels">${labelSummary || 'No category scores returned'}</div>
+      ${highlights ? `<div class="wa-event-highlights">Highlights: ${highlights}</div>` : ''}
+      <div class="section-label" style="margin-top:5px;text-transform:none;letter-spacing:0">${escapeHtml(result.analysis || '')}</div>`;
+    recordScan(result.verdict === 'TOXIC' ? 'threat' : 'safe');
+    dashLog(`[WHATSAPP] ${result.verdict} from ${event.sender || event.from} (${Number(result.score || 0).toFixed(1)}%)`,
+      result.verdict === 'TOXIC' ? 'log-err' : 'log-ok');
+  } else {
+    item.textContent = `[${time}] ${event.text || 'WhatsApp event'}`;
+  }
+  box.prepend(item);
+  while (box.children.length > 50) box.removeChild(box.lastChild);
+}
+
+async function pollWhatsApp() {
+  try {
+    const statusResp = await fetch(`${WHATSAPP_API}/status`, { signal: AbortSignal.timeout(2500) });
+    const current = await statusResp.json();
+    const qrPanel = qs('#waQrPanel');
+    const qr = qs('#waQr');
+    const logout = qs('#waLogoutBtn');
+    if (current.status === 'qr' && current.qr) {
+      qr.src = current.qr;
+      qrPanel.style.display = 'block';
+      waSetStatus('Waiting for QR scan', 'waiting');
+    } else if (current.status === 'connected') {
+      qrPanel.style.display = 'none';
+      waSetStatus('Connected and analysing incoming messages', 'connected');
+    } else if (current.status === 'error') {
+      qrPanel.style.display = 'none';
+      waSetStatus(current.error || 'WhatsApp bridge error', 'error');
+    } else {
+      waSetStatus(`WhatsApp: ${String(current.status || 'starting').replace('_', ' ')}`);
+    }
+    qs('#waAccount').textContent = current.account ? `Account: +${current.account}` : '';
+    logout.disabled = !['qr', 'authenticating', 'connected'].includes(current.status);
+
+    const eventResp = await fetch(`${WHATSAPP_API}/events?after=${waLastSequence}`, { signal: AbortSignal.timeout(2500) });
+    const eventData = await eventResp.json();
+    for (const event of eventData.events || []) {
+      waLastSequence = Math.max(waLastSequence, Number(event.sequence || 0));
+      renderWhatsAppEvent(event);
+    }
+  } catch (_) {
+    waSetStatus('Bridge offline — start the WhatsApp bridge', 'error');
+  }
+}
+
+async function connectWhatsApp() {
+  if (!qs('#waConsent').checked) {
+    alert('Confirm that you authorize this WhatsApp account before connecting.');
+    return;
+  }
+  waSetStatus('Starting WhatsApp Web…', 'waiting');
+  if (!waPollTimer) waPollTimer = setInterval(pollWhatsApp, 2000);
+  await pollWhatsApp();
+}
+
+async function logoutWhatsApp() {
+  try {
+    await fetch(`${WHATSAPP_API}/logout`, { method: 'POST' });
+    qs('#waQrPanel').style.display = 'none';
+    waSetStatus('Disconnected');
+  } catch (_) {
+    waSetStatus('Could not disconnect from bridge', 'error');
+  }
+}
+
+qs('#waConnectBtn')?.addEventListener('click', connectWhatsApp);
+qs('#waLogoutBtn')?.addEventListener('click', logoutWhatsApp);
+
 /* ══════════════════════════════════════════════════════════════════
    MODULE 3: DARK WEB MONITOR
 ══════════════════════════════════════════════════════════════════ */
