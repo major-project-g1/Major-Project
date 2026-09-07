@@ -3,7 +3,7 @@
 **Intelligent Multi-Threat Cyber Forensics Platform**
 
 Team: Dhyan Kumar M · Vathsalya V · Meghana H J · Sammita Abhay  
-Guide: Mr. B S Umashankar | Dept. of CSE, GAT | 2025–26
+Guide: Shwetha N | Dept. of CSE, GAT | 2025–26
 
 ---
 
