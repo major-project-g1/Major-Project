@@ -860,6 +860,126 @@ input[type=range] {
 .wa-event-labels, .wa-event-highlights { margin-top: 6px; color: var(--muted); font-size: 0.7rem; }
 .wa-highlight { display: inline-block; margin: 2px 3px 0 0; padding: 1px 5px; border-radius: 4px; color: var(--orange); background: rgba(240, 136, 62, 0.15); }
 
+.suricata-monitor-form {
+  display: grid;
+  grid-template-columns: minmax(220px, 1fr) 140px auto auto;
+  gap: 8px;
+  align-items: center;
+  margin-top: 12px;
+}
+
+.suricata-monitor-status {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface2);
+}
+
+.suricata-filter-help { margin-top: 8px; }
+
+.suricata-events {
+  display: grid;
+  gap: 7px;
+  max-height: 230px;
+  overflow-y: auto;
+  margin-top: 10px;
+}
+
+.suricata-event {
+  padding: 8px 10px;
+  border-left: 3px solid var(--green);
+  background: #0a0f1a;
+  color: var(--muted);
+  font-size: 0.72rem;
+}
+
+.suricata-event.warn { border-left-color: var(--yellow); }
+.suricata-event.error { border-left-color: var(--red); color: var(--text); }
+.suricata-event.website {
+  border-left-color: var(--blue);
+  color: var(--text);
+  font-weight: 600;
+}
+
+.packet-summary {
+  margin-top: 12px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface2);
+}
+
+.packet-summary-title, .packet-summary-label {
+  color: var(--muted);
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.packet-summary-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  margin-top: 10px;
+}
+
+.packet-summary-wide { grid-column: 1 / -1; }
+.packet-chips { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 6px; }
+.packet-chip {
+  padding: 4px 7px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--text);
+  background: #0a0f1a;
+  font-family: var(--mono);
+  font-size: 0.7rem;
+}
+.packet-chip strong { color: var(--orange); }
+.packet-chip.website { color: var(--blue); }
+.packet-rows { display: grid; gap: 4px; margin-top: 6px; }
+.packet-row {
+  display: grid;
+  grid-template-columns: 70px 70px minmax(0, 1fr);
+  gap: 8px;
+  padding: 5px 7px;
+  border-left: 2px solid var(--border);
+  background: #0a0f1a;
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 0.68rem;
+}
+.packet-row strong { color: var(--text); }
+.visit-row { grid-template-columns: 150px 55px minmax(0, 1fr); }
+.visit-row b { color: var(--blue); }
+.scraped-content, .scraped-links {
+  margin-top: 12px;
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: #0a0f1a;
+}
+.scraped-content pre {
+  max-height: 420px;
+  overflow: auto;
+  margin: 8px 0 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: var(--text);
+  font: 0.72rem/1.6 var(--mono);
+}
+
+@media (max-width: 800px) {
+  .suricata-monitor-form { grid-template-columns: 1fr 1fr; }
+  .suricata-monitor-form .text-input { grid-column: 1 / -1; }
+  .packet-summary-grid { grid-template-columns: 1fr; }
+  .packet-summary-wide { grid-column: auto; }
+  .packet-row { grid-template-columns: 1fr; gap: 2px; }
+}
+
 /* ── Log boxes ──────────────────────────────────────────────────── */
 .log-box {
   background: #0a0f1a;

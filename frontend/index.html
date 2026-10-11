@@ -159,6 +159,19 @@
               <button class="btn-primary" id="dfAnalyseBtn" disabled onclick="runDeepfake()">
                 Analyse Image
               </button>
+
+              <div style="margin-top:18px;padding-top:14px;border-top:1px solid var(--border)">
+                <div class="row-between">
+                  <div>
+                    <strong>Real-time screen analysis</strong>
+                    <div class="section-label">Share a screen or window; frames are checked locally through the existing detector API.</div>
+                  </div>
+                  <button class="btn-secondary" id="dfShareBtn" type="button">Share screen</button>
+                </div>
+                <button class="btn-secondary" id="dfStopShareBtn" type="button" style="display:none;margin-top:10px">Stop sharing</button>
+                <video id="dfSharePreview" muted autoplay playsinline style="display:none;width:100%;max-height:180px;margin-top:10px;border-radius:6px;background:#0a0f1a"></video>
+                <div id="dfShareStatus" class="section-label" style="margin-top:8px">Screen sharing is off.</div>
+              </div>
             </div>
 
             <!-- Right: Result -->
@@ -278,83 +291,39 @@
         <section class="tab" id="tab-darkweb">
           <div class="tab-header">
             <h1>🕸️ Dark Web Intelligence Monitor</h1>
-            <p>Run a controlled hidden-service intelligence simulation with progressive network updates, onion-style
-              nodes, and threat scoring.</p>
+            <p>Inspect URLs and public page content without opening targets in your browser. Onion services are checked
+              locally and never contacted by this API.</p>
           </div>
 
           <div class="two-col">
             <div class="card">
-              <h3 class="card-title">Scan Setup</h3>
+              <h3 class="card-title">Read-only URL inspection</h3>
+              <p class="section-label">Enter a public URL or onion address. The backend checks it without opening it
+                in your browser. Public HTML can be collected as text only; onion services are never contacted.</p>
               <div class="form-group">
-                <label>Dark web category</label>
-                <select class="select-input" id="dwCat">
-                  <option>Drug Markets</option>
-                  <option>Hacking Forums</option>
-                  <option>Stolen Data / Credentials</option>
-                  <option>Ransomware Infrastructure</option>
-                  <option>Fraud Services</option>
-                </select>
+                <label>URL to inspect</label>
+                <input class="text-input" id="dwScanUrl" placeholder="https://example.com or abc...onion" />
               </div>
-              <div class="form-group">
-                <label>Threat keywords</label>
-                <input class="text-input-sm" id="dwKw" value="malware, exploit, RaaS, C2" />
-              </div>
-              <div class="form-group">
-                <label>Hidden-service nodes to scan: <strong id="dwNodeVal">12</strong></label>
-                <input type="range" min="5" max="40" value="12" id="dwNodes"
-                  oninput="document.getElementById('dwNodeVal').textContent=this.value" />
-              </div>
-              <button class="btn-primary" onclick="runDarkWeb()" id="dwBtn">Start Scan</button>
+              <button class="btn-primary" onclick="runDarkWeb()" id="dwBtn">Inspect URL</button>
             </div>
 
-            <div class="card">
-              <h3 class="card-title">Onion Threat Network</h3>
-              <canvas id="dwCanvas" width="420" height="230"
-                style="width:100%;border-radius:6px;background:#0a0f1a"></canvas>
-              <div class="legend">
-                <span class="leg-dot" style="background:#ef4444"></span> Critical
-                <span class="leg-dot" style="background:#f97316"></span> High
-                <span class="leg-dot" style="background:#eab308"></span> Medium
-                <span class="leg-dot" style="background:#22c55e"></span> Low
-              </div>
-            </div>
           </div>
 
           <div class="card">
             <h3 class="card-title">Link Intelligence</h3>
-            <p class="section-label">Analyze a dark web or normal URL using structural checks and threat signals.</p>
+            <p class="section-label">Analyze a URL without opening it in your browser. Structural checks run locally;
+              optional read-only page collection runs on the backend and never executes page scripts.</p>
             <div class="form-group">
               <label>URL to inspect</label>
               <input class="text-input-sm" id="dwLink" placeholder="https://example.com or hiddenservice.onion" />
             </div>
             <div class="row-between" style="margin-top:12px">
               <button class="btn-primary" onclick="runDarkWebLink()" id="dwLinkBtn">Analyze Link</button>
-              <span class="section-label">Checks onion structure, clearnet validity, and suspicious patterns</span>
+              <button class="btn-secondary" onclick="runDarkWebFetch()" id="dwFetchBtn">Read-only page intel</button>
+              <span class="section-label">Onion pages are fetched only through the configured Tor SOCKS5 gateway.</span>
             </div>
             <div id="dwLinkResult" class="result-empty" style="margin-top:12px">
               <span>Paste a URL to analyze its intelligence profile</span>
-            </div>
-          </div>
-
-          <div class="card">
-            <h3 class="card-title">Page Content Scraper</h3>
-            <p class="section-label">Paste a page snapshot or HTML source to extract titles, links, keywords, and risk
-              signals.</p>
-            <div class="form-group">
-              <label>Page snapshot / HTML</label>
-              <textarea class="text-input" id="dwPageSource" rows="8"
-                placeholder="<html>...paste page source or text snapshot...</html>"></textarea>
-            </div>
-            <div class="form-group">
-              <label>Optional origin URL</label>
-              <input class="text-input-sm" id="dwPageUrl" placeholder="https://site.example or hiddenservice.onion" />
-            </div>
-            <div class="row-between" style="margin-top:12px">
-              <button class="btn-primary" onclick="runDarkWebPageIntel()" id="dwPageBtn">Scrape Snapshot</button>
-              <span class="section-label">Extracts metadata, links, page type, and suspicious signals</span>
-            </div>
-            <div id="dwPageResult" class="result-empty" style="margin-top:12px">
-              <span>Paste a page snapshot to analyze its contents</span>
             </div>
           </div>
 
@@ -418,6 +387,39 @@
               <div class="log-sys">// LSTM Integrity Engine — Ready.</div>
             </div>
           </div>
+
+          <div class="card">
+            <h3 class="card-title">Live Suricata Packet Monitor</h3>
+            <p class="section-label">
+              Tail Suricata <code>eve.json</code> or <code>fast.log</code> here. The monitor groups the stream by
+              event type, protocol, and website/domain so you can understand the traffic without reading thousands of
+              raw records.
+            </p>
+            <div class="suricata-monitor-form">
+              <input class="text-input" id="ltSuricataPath"
+                placeholder="C:\Program Files\Suricata\log\eve.json" />
+              <select class="select-input" id="ltSuricataFormat">
+                <option value="auto">Auto detect</option>
+                <option value="eve.json">eve.json</option>
+                <option value="fast.log">fast.log</option>
+              </select>
+              <button class="btn-primary" id="ltMonitorStart" type="button">Start monitor</button>
+              <button class="btn-secondary" id="ltMonitorStop" type="button" disabled>Stop</button>
+            </div>
+            <div class="suricata-monitor-status">
+              <span id="ltMonitorStatus" class="wa-status">Monitor stopped</span>
+              <span id="ltMonitorEntries" class="section-label">0 new records</span>
+            </div>
+            <p class="section-label suricata-filter-help">
+              All websites are shown as a compact chronological timeline. Use <code>eve.json</code> for HTTPS/TLS
+              website names; encrypted traffic exposes the hostname through TLS SNI, not the page URL.
+            </p>
+            <div id="ltMonitorResult" class="result-empty" style="margin-top:12px">
+              <span>Live packet summaries will appear here.</span>
+            </div>
+            <div id="ltPacketSummary" class="packet-summary"></div>
+            <div id="ltMonitorEvents" class="suricata-events"></div>
+          </div>
         </section>
 
         <!-- ═══════════════════════════════════════════════════
@@ -462,8 +464,8 @@
                 </div>
                 <div class="module-row"><span>🛡️ Cyberbullying NLP</span><span class="badge purple">BERT-sim</span>
                 </div>
-                <div class="module-row"><span>🕸️ Dark Web Intelligence</span><span class="badge orange">Simulated
-                    Crawl</span></div>
+                <div class="module-row"><span>🕸️ Dark Web Intelligence</span><span class="badge orange">Read-only
+                    URL Intel</span></div>
                 <div class="module-row"><span>📋 Log Integrity</span><span class="badge green">LSTM</span></div>
               </div>
             </div>
@@ -491,7 +493,7 @@
   </div>
 
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-  <script src="js/app.js"></script>
+  <script src="js/app.js?v=20260908-2319"></script>
 </body>
 
 </html>

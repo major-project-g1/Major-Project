@@ -7,17 +7,368 @@ from flask import Flask, request, jsonify
 
 import hashlib
 import joblib, numpy as np
-from PIL import Image, ImageFilter
+from PIL import ExifTags, Image, ImageFilter
 import io, base64, os, time
 import random
 import re
+import json
+import threading
+from datetime import datetime
+from collections import deque
 import ipaddress
+import socket
+import urllib.error
+import urllib.parse
+import urllib.request
+import requests
 from urllib.parse import urlparse
 from html.parser import HTMLParser
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
 
 app = Flask(__name__)
+
+SURICATA_MONITOR = {
+    'lock': threading.Lock(),
+    'thread': None,
+    'stop': None,
+    'status': 'stopped',
+    'path': None,
+    'format': 'auto',
+    'offset': 0,
+    'entries': 0,
+    'matched_entries': 0,
+    'issues': [],
+    'events': deque(maxlen=200),
+    'sequence': 0,
+    'buffer': '',
+    'last_timestamp': None,
+    'file_id': None,
+    'error': None,
+    'packet_types': {},
+    'protocols': {},
+    'websites': {},
+    'recent_packets': deque(maxlen=40),
+    'website_visits': deque(maxlen=200),
+    'last_visit_times': {},
+    'timestamp_tolerance_seconds': 1.0,
+}
+
+
+def suricata_event(message, event_type='info', verdict=None):
+    monitor = SURICATA_MONITOR
+    monitor['sequence'] += 1
+    monitor['events'].append({
+        'sequence': monitor['sequence'],
+        'timestamp': time.strftime('%Y-%m-%dT%H:%M:%S'),
+        'type': event_type,
+        'message': message,
+        'verdict': verdict or ('TAMPERED' if monitor['issues'] else 'CLEAN'),
+        'entries': monitor['entries'],
+    })
+
+def suricata_line_timestamp(line, parsed=None):
+    if isinstance(parsed, dict):
+        value = parsed.get('timestamp')
+        if isinstance(value, str) and value:
+            return value
+    match = re.search(
+        r'(20\d{2}[-/]\d{2}[-/]\d{2}[ T]\d{2}:\d{2}:\d{2}(?:\.\d+)?|'
+        r'\d{2}[-/]\d{2}[-/]20\d{2}[-T]\d{2}:\d{2}:\d{2}(?:\.\d+)?|'
+        r'\d{2}:\d{2}:\d{2})',
+        line
+    )
+    return match.group(1).replace('/', '-') if match else None
+
+
+def parse_suricata_timestamp(value):
+    if not value:
+        return None
+    try:
+        normalized = str(value).replace('Z', '+00:00')
+        return datetime.fromisoformat(normalized)
+    except ValueError:
+        return None
+
+
+def increment_counter(counter, value):
+    if value:
+        counter[value] = counter.get(value, 0) + 1
+
+
+def suricata_packet_details(line, parsed):
+    if not isinstance(parsed, dict):
+        return {
+            'event_type': 'fast.log',
+            'protocol': None,
+            'website': None,
+            'source': None,
+            'destination': None,
+        }
+
+    event_type = str(parsed.get('event_type') or 'unknown')
+    proto = parsed.get('proto')
+    flow = parsed.get('flow') if isinstance(parsed.get('flow'), dict) else {}
+    source = parsed.get('src_ip') or flow.get('src_ip')
+    destination = parsed.get('dest_ip') or flow.get('dest_ip')
+    website = None
+
+    dns = parsed.get('dns') if isinstance(parsed.get('dns'), dict) else {}
+    http = parsed.get('http') if isinstance(parsed.get('http'), dict) else {}
+    tls = parsed.get('tls') if isinstance(parsed.get('tls'), dict) else {}
+    website = dns.get('rrname') or http.get('hostname') or tls.get('sni')
+    if not website and http.get('url'):
+        website = urlparse(str(http['url'])).hostname
+
+    return {
+        'event_type': event_type,
+        'protocol': str(proto).upper() if proto else None,
+        'website': str(website) if website else None,
+        'source': str(source) if source else None,
+        'destination': str(destination) if destination else None,
+        'timestamp': parsed.get('timestamp') if isinstance(parsed, dict) else None,
+        'status': http.get('status') if isinstance(http, dict) else None,
+        'referer': http.get('http_referer') if isinstance(http, dict) else None,
+    }
+
+
+def record_suricata_packet(line, parsed):
+    monitor = SURICATA_MONITOR
+    details = suricata_packet_details(line, parsed)
+    increment_counter(monitor['packet_types'], details['event_type'])
+    increment_counter(monitor['protocols'], details['protocol'])
+    increment_counter(monitor['websites'], details['website'])
+    if details['event_type'] != 'unknown' or details['protocol'] or details['website']:
+        monitor['recent_packets'].append(details)
+
+
+def record_website_visit(details):
+    monitor = SURICATA_MONITOR
+    website = details.get('website')
+    if not website:
+        return None
+    hostname = website.lower().rstrip('.')
+    timestamp = parse_suricata_timestamp(details.get('timestamp')) or datetime.now().astimezone()
+    previous = monitor['last_visit_times'].get(hostname)
+    if previous and (timestamp - previous).total_seconds() < 2:
+        return None
+    monitor['last_visit_times'][hostname] = timestamp
+    visit = {
+        'timestamp': details.get('timestamp') or timestamp.isoformat(timespec='milliseconds'),
+        'website': hostname,
+        'event_type': details.get('event_type'),
+        'protocol': details.get('protocol'),
+        'source': details.get('source'),
+        'destination': details.get('destination'),
+        'status': details.get('status'),
+        'referer': details.get('referer'),
+    }
+    monitor['website_visits'].append(visit)
+    return visit
+
+
+def process_suricata_lines(lines):
+    monitor = SURICATA_MONITOR
+    new_issues = []
+    log_format = monitor['format']
+    for raw_line in lines:
+        line = raw_line.strip()
+        if not line:
+            continue
+        monitor['entries'] += 1
+        parsed = None
+        is_json = log_format == 'eve.json' or (log_format == 'auto' and line.startswith('{'))
+        if is_json:
+            try:
+                parsed = json.loads(line)
+            except json.JSONDecodeError:
+                new_issues.append({
+                    'type': 'error',
+                    'msg': f'Invalid Suricata JSON at entry {monitor["entries"]}; possible partial or modified record.'
+                })
+        if isinstance(parsed, dict) and parsed.get('cyberforensics_test_tampered') is True:
+            new_issues.append({
+                'type': 'error',
+                'msg': f'Explicit test tampering marker found at entry {monitor["entries"]}.'
+            })
+        details = suricata_packet_details(line, parsed)
+        monitor['matched_entries'] += 1
+        record_suricata_packet(line, parsed)
+        visit = record_website_visit(details)
+        if visit:
+            redirect = f' from {visit["referer"]}' if visit.get('referer') else ''
+            status = f' · HTTP {visit["status"]}' if visit.get('status') else ''
+            suricata_event(
+                f'Website observed: {visit["website"]}{redirect}{status} '
+                f'({visit.get("protocol") or "web"}).',
+                'website',
+                'CLEAN'
+            )
+        timestamp = suricata_line_timestamp(line, parsed)
+        previous = monitor['last_timestamp']
+        current_dt = parse_suricata_timestamp(timestamp)
+        previous_dt = parse_suricata_timestamp(previous)
+        if (
+            current_dt and previous_dt
+            and (previous_dt - current_dt).total_seconds() > monitor['timestamp_tolerance_seconds']
+        ):
+            new_issues.append({
+                'type': 'warn',
+                'msg': f'Timestamp reversal at entry {monitor["entries"]}: {timestamp} < {previous}'
+            })
+        if current_dt and (
+            not previous_dt or current_dt > previous_dt
+        ):
+            monitor['last_timestamp'] = timestamp
+        if not is_json and re.search(
+            r'\b(?:MISSING|DELETED|TRUNCATED|TAMPERED|MODIFIED)\b',
+            line,
+            re.IGNORECASE
+        ):
+            new_issues.append({
+                'type': 'error',
+                'msg': f'Suspicious tampering marker found at entry {monitor["entries"]}.'
+            })
+    if new_issues:
+        monitor['issues'].extend(new_issues)
+        for issue in new_issues:
+            suricata_event(issue['msg'], issue['type'], 'TAMPERED')
+    elif lines:
+        suricata_event(
+            f'Analysed {len(lines)} new Suricata record(s); no tampering indicators found.',
+            'ok',
+            'CLEAN'
+        )
+
+
+def suricata_monitor_worker(stop_event):
+    monitor = SURICATA_MONITOR
+    while not stop_event.wait(0.5):
+        try:
+            stat = os.stat(monitor['path'])
+            current_id = (getattr(stat, 'st_dev', 0), getattr(stat, 'st_ino', 0))
+            if monitor['file_id'] is None:
+                monitor['file_id'] = current_id
+            if monitor['file_id'] and current_id != monitor['file_id']:
+                monitor['offset'] = 0
+                monitor['buffer'] = ''
+                monitor['file_id'] = current_id
+                suricata_event('Suricata log file identity changed; monitoring continued from the new file.', 'warn')
+            if stat.st_size < monitor['offset']:
+                monitor['issues'].append({
+                    'type': 'error',
+                    'msg': 'Suricata log size decreased; possible truncation or rewrite detected.'
+                })
+                suricata_event('Suricata log size decreased; possible truncation or rewrite detected.', 'error', 'TAMPERED')
+                monitor['offset'] = 0
+                monitor['buffer'] = ''
+            if stat.st_size == monitor['offset']:
+                continue
+            with open(monitor['path'], 'r', encoding='utf-8', errors='replace') as handle:
+                handle.seek(monitor['offset'])
+                chunk = handle.read()
+                monitor['offset'] = handle.tell()
+            monitor['buffer'] += chunk
+            parts = monitor['buffer'].split('\n')
+            complete, monitor['buffer'] = parts[:-1], parts[-1]
+            process_suricata_lines(complete)
+        except FileNotFoundError:
+            monitor['status'] = 'error'
+            monitor['error'] = f'Log file not found: {monitor["path"]}'
+            suricata_event(monitor['error'], 'error', 'TAMPERED')
+            return
+        except Exception as error:
+            monitor['status'] = 'error'
+            monitor['error'] = str(error)
+            suricata_event(f'Monitor error: {error}', 'error', 'TAMPERED')
+            return
+
+
+@app.route('/api/logtamper/monitor/start', methods=['POST'])
+def start_suricata_monitor():
+    data = request.get_json(silent=True) or {}
+    path = os.path.abspath(os.path.expanduser(str(data.get('path', '')).strip()))
+    log_format = str(data.get('format', 'auto')).strip().lower()
+    if log_format not in {'auto', 'eve.json', 'fast.log'}:
+        return jsonify({'error': 'Format must be auto, eve.json, or fast.log'}), 400
+    if not path or not os.path.isfile(path):
+        return jsonify({'error': f'Log file does not exist: {path}'}), 400
+
+    stop_suricata_monitor()
+    monitor = SURICATA_MONITOR
+    monitor.update({
+        'status': 'running',
+        'path': path,
+        'format': log_format,
+        'offset': os.path.getsize(path),
+        'entries': 0,
+        'matched_entries': 0,
+        'issues': [],
+        'events': deque(maxlen=200),
+        'sequence': 0,
+        'buffer': '',
+        'last_timestamp': None,
+        'file_id': None,
+        'error': None,
+        'packet_types': {},
+        'protocols': {},
+        'websites': {},
+        'recent_packets': deque(maxlen=40),
+        'website_visits': deque(maxlen=200),
+        'last_visit_times': {},
+        'timestamp_tolerance_seconds': 1.0,
+    })
+    monitor['stop'] = threading.Event()
+    monitor['thread'] = threading.Thread(
+        target=suricata_monitor_worker,
+        args=(monitor['stop'],),
+        daemon=True,
+        name='suricata-log-monitor'
+    )
+    monitor['thread'].start()
+    suricata_event(f'Monitoring started: {path}', 'system', 'CLEAN')
+    return jsonify({'status': monitor['status'], 'path': path, 'format': log_format})
+
+
+@app.route('/api/logtamper/monitor/stop', methods=['POST'])
+def stop_suricata_monitor():
+    monitor = SURICATA_MONITOR
+    stop_event = monitor.get('stop')
+    if stop_event:
+        stop_event.set()
+    monitor['thread'] = None
+    monitor['stop'] = None
+    if monitor['status'] != 'error':
+        monitor['status'] = 'stopped'
+    return jsonify({'status': monitor['status']})
+
+
+@app.route('/api/logtamper/monitor/status', methods=['GET'])
+def suricata_monitor_status():
+    monitor = SURICATA_MONITOR
+    after = int(request.args.get('after', 0))
+    return jsonify({
+        'status': monitor['status'],
+        'path': monitor['path'],
+        'format': monitor['format'],
+        'entries': monitor['entries'],
+        'matched_entries': monitor['matched_entries'],
+        'verdict': 'TAMPERED' if monitor['issues'] else 'CLEAN',
+        'issues': monitor['issues'][-50:],
+        'error': monitor['error'],
+        'packet_summary': {
+            'event_types': monitor['packet_types'],
+            'protocols': monitor['protocols'],
+            'websites': sorted(
+                [{'name': name, 'count': count} for name, count in monitor['websites'].items()],
+                key=lambda item: item['count'],
+                reverse=True
+            )[:20],
+            'recent': list(monitor['recent_packets'])[-20:],
+            'visits': list(monitor['website_visits'])[-100:],
+        },
+        'events': [event for event in monitor['events'] if event['sequence'] > after],
+    })
  
 
 # ── Load model ──────────────────────────────────────────────────────
@@ -25,7 +376,7 @@ MODEL_PATH  = os.path.join(os.path.dirname(__file__), 'model.pkl')
 SCALER_PATH = os.path.join(os.path.dirname(__file__), 'scaler.pkl')
 
 model  = joblib.load(MODEL_PATH)
-scaler = joblib.load(SCALER_PATH) 
+scaler = joblib.load(SCALER_PATH)
 print(f"Model loaded from {MODEL_PATH}")
 print(f"Scaler loaded from {SCALER_PATH}")
 
@@ -94,10 +445,165 @@ def extract_features(img: Image.Image) -> np.ndarray:
     return np.array(features, dtype=np.float32)
 
 
+AI_METADATA_SIGNATURES = {
+    'Google Gemini': (
+        'gemini', 'google imagen', 'google deepmind', 'imagen 2', 'imagen 3',
+        'imagen 4', 'synthid', 'google labs'
+    ),
+    'OpenAI / DALL-E': (
+        'openai', 'dall-e', 'dalle', 'chatgpt'
+    ),
+    'Midjourney': ('midjourney',),
+    'Adobe Firefly': ('adobe firefly', 'firefly'),
+    'Stable Diffusion': (
+        'stable diffusion', 'automatic1111', 'automatic1111', 'comfyui',
+        'invokeai', 'a1111'
+    ),
+    'Leonardo AI': ('leonardo ai', 'leonardo.ai'),
+    'Ideogram': ('ideogram',),
+    'Microsoft Designer / Bing Image Creator': (
+        'microsoft designer', 'bing image creator', 'bing create'
+    ),
+    'Flux': ('black forest labs', 'flux.1', 'flux1'),
+    'Canva AI': ('canva magic media', 'canva ai'),
+    'AI image generator': (
+        'ai-generated', 'ai generated', 'generative ai', 'text-to-image',
+        'text to image', 'image generator', 'trainedalgorithmicmedia',
+        'compositewithtrainedalgorithmicmedia', 'generatedbyai'
+    ),
+}
+AI_METADATA_FIELD_SIGNATURES = {
+    'Google Gemini': ('software: google', 'creator: google', 'producer: google'),
+    'OpenAI / DALL-E': (
+        'software: openai', 'creator: openai', 'producer: openai',
+        'openai media service api', 'gpt-image'
+    ),
+}
+AI_C2PA_SIGNATURES = {
+    'Google Gemini': (
+        'google c2pa media services', 'google media processing services',
+        'google system 600321'
+    ),
+    'OpenAI / DALL-E': (
+        'openai media service', 'openai opco, llc', 'gpt-image',
+        'digitalSourceType trainedAlgorithmicMedia',
+        'trainedalgorithmicmedia'
+    ),
+}
+
+
+def _metadata_text(value):
+    if value is None:
+        return ''
+    if isinstance(value, bytes):
+        return value.decode('utf-8', errors='ignore')
+    if isinstance(value, (str, int, float)):
+        return str(value)
+    return ''
+
+
+def extract_image_metadata(image_bytes, img, filename=''):
+    """Read embedded provenance fields without treating missing metadata as proof of authenticity."""
+    fields = {}
+    text_parts = []
+
+    for key, value in (img.info or {}).items():
+        text = _metadata_text(value).strip()
+        if not text:
+            continue
+        safe_key = str(key)
+        fields[safe_key] = text[:500]
+        text_parts.append(f'{safe_key}: {text}')
+
+    try:
+        exif = img.getexif()
+        for tag_id, value in exif.items():
+            tag_name = str(ExifTags.TAGS.get(tag_id, tag_id))
+            text = _metadata_text(value).strip()
+            if not text:
+                continue
+            fields[f'EXIF {tag_name}'] = text[:500]
+            text_parts.append(f'EXIF {tag_name}: {text}')
+    except Exception:
+        # Some valid image formats do not expose EXIF through Pillow.
+        pass
+
+    raw_text = image_bytes.decode('latin-1', errors='ignore')
+    utf16_text = ' '.join(
+        image_bytes.decode(encoding, errors='ignore')
+        for encoding in ('utf-16-le', 'utf-16-be')
+    )
+    searchable = ' '.join(
+        text_parts + [filename, raw_text, raw_text.replace('\x00', ''), utf16_text]
+    ).lower()
+    for marker in ('<x:xmpmeta', '<rdf:rdf', 'c2pa', 'jumbf', 'content credentials', 'xmp'):
+        if marker in searchable:
+            fields['embedded provenance marker'] = marker
+            text_parts.append(marker)
+
+    matches = []
+    for source, signatures in AI_C2PA_SIGNATURES.items():
+        if any(signature.lower() in searchable for signature in signatures):
+            matches.append(source)
+    for source, signatures in AI_METADATA_FIELD_SIGNATURES.items():
+        if any(signature in searchable for signature in signatures):
+            matches.append(source)
+    for source, signatures in AI_METADATA_SIGNATURES.items():
+        if any(signature in searchable for signature in signatures):
+            matches.append(source)
+
+    if matches:
+        source = next(iter(dict.fromkeys(matches)))
+        evidence = next(
+            (
+                signature for signature in (
+                    AI_C2PA_SIGNATURES.get(source, ())
+                    + AI_METADATA_FIELD_SIGNATURES.get(source, ())
+                    + AI_METADATA_SIGNATURES.get(source, ())
+                )
+                if signature.lower() in searchable
+            ),
+            'C2PA AI provenance'
+        )
+        reason = (
+            f'Embedded C2PA/metadata evidence "{evidence}" identifies this upload as '
+            f'AI-generated by {source}.'
+        )
+        return {
+            'checked': True,
+            'ai_generated': True,
+            'confidence': 100.0,
+            'source': source,
+            'reason': reason,
+            'evidence': evidence,
+            'fields': fields,
+            'filename': filename or None,
+        }
+
+    return {
+        'checked': True,
+        'ai_generated': False,
+        'confidence': None,
+        'source': None,
+        'reason': (
+            'No recognized AI provenance was found in the embedded metadata. '
+            'Metadata can be removed or rewritten, so this does not prove the image is real.'
+        ),
+        'fields': fields,
+        'filename': filename or None,
+    }
+
+
 # ── Routes ─────────────────────────────────────────────────────────
 @app.route('/api/health', methods=['GET'])
 def health():
-    return jsonify({'status': 'online', 'model': 'XGBoost-v1', 'features': 34})
+    return jsonify({
+        'status': 'online',
+        'model': 'XGBoost-v1',
+        'features': 34,
+        'metadata_detection': True,
+        'metadata_detection_version': 2,
+    })
 
 
 @app.route('/api/detect', methods=['POST'])
@@ -123,205 +629,83 @@ def detect():
 
         img_bytes = base64.b64decode(b64)
 
-        img = Image.open(
-            io.BytesIO(img_bytes)
-        ).convert('RGB')
+        source_img = Image.open(io.BytesIO(img_bytes))
+        metadata_check = bool(data.get('check_metadata', False))
+        metadata = (
+            extract_image_metadata(img_bytes, source_img, str(data.get('filename') or ''))
+            if metadata_check else {
+                'checked': False,
+                'ai_generated': False,
+                'confidence': None,
+                'source': None,
+                'reason': 'Metadata check skipped for this frame.',
+                'fields': {},
+                'filename': None,
+            }
+        )
+        img = source_img.convert('RGB')
+
+        if metadata['ai_generated']:
+            elapsed = round((time.time() - start) * 1000, 1)
+            return jsonify({
+                'verdict': 'FAKE',
+                'fake_pct': 100.0,
+                'real_pct': 0.0,
+                'confidence': 100.0,
+                'high_anomalies': 0,
+                'strongest_anomaly': 100.0,
+                'features': {},
+                'time_ms': elapsed,
+                'model': 'Embedded AI provenance metadata',
+                'metadata': metadata,
+            })
 
 
-        # ── Extract 34 features ──────────────────────────────
-
+        # ── Extract and scale forensic features ──────────────
         feats = extract_features(img).reshape(1, -1)
-
-        print("Extracted feature shape:", feats.shape)
-        print("Scaler expects:", scaler.n_features_in_)
-
-        expected_features = scaler.n_features_in_
-
-        if feats.shape[1] != expected_features:
-            raise ValueError(
-                f"Expected {expected_features} features, got {feats.shape[1]}"
-            )
-
-
-        # ── Scale features ───────────────────────────────────
-
+        if feats.shape[1] != scaler.n_features_in_:
+            raise ValueError(f"Expected {scaler.n_features_in_} features, got {feats.shape[1]}")
         feats_scaled = scaler.transform(feats)
 
-
         # ── XGBoost prediction ───────────────────────────────
-
-        pred = model.predict(
-            feats_scaled
-        )[0]
-
-        proba = model.predict_proba(
-            feats_scaled
-        )[0]
-
+        pred = model.predict(feats_scaled)[0]
+        proba = model.predict_proba(feats_scaled)[0]
         fake_pct = float(proba[1]) * 100
-
         real_pct = float(proba[0]) * 100
 
-
-        # ── Feature values ───────────────────────────────────
-
+        # ── Forensic feature display ─────────────────────────
         ela_mean = float(feats[0, 3])
-
         hf_ratio = float(feats[0, 0])
-
         edge_mean = float(feats[0, 12])
-
         tex_var = float(feats[0, 15])
-
         col_corr = float(feats[0, 7])
 
-
-        # ── Normalize to 0–100 ───────────────────────────────
-
         def sig(val, low, high):
-
-            return min(
-                100,
-                max(
-                    0,
-                    (val - low) /
-                    (high - low) * 100
-                )
-            )
-
-
-        # ── Feature display ──────────────────────────────────
+            return min(100, max(0, (val - low) / (high - low) * 100))
 
         features_display = {
-
-            'ELA Artifact Level':
-                round(
-                    sig(ela_mean, 3, 20),
-                    1
-                ),
-
-            'Frequency Anomaly':
-                round(
-                    sig(hf_ratio, 0.6, 1.8),
-                    1
-                ),
-
-            'Edge Inconsistency':
-                round(
-                    sig(
-                        18 - edge_mean,
-                        0,
-                        10
-                    ),
-                    1
-                ),
-
-            'Texture Uniformity':
-                round(
-                    sig(
-                        500 - tex_var,
-                        0,
-                        300
-                    ),
-                    1
-                ),
-
-            'Color Ch. Deviation':
-                round(
-                    sig(
-                        1 - col_corr,
-                        0,
-                        0.4
-                    ),
-                    1
-                )
+            'ELA Artifact Level': round(sig(ela_mean, 3, 20), 1),
+            'Frequency Anomaly': round(sig(hf_ratio, 0.6, 1.8), 1),
+            'Edge Inconsistency': round(sig(18 - edge_mean, 0, 10), 1),
+            'Texture Uniformity': round(sig(500 - tex_var, 0, 300), 1),
+            'Color Ch. Deviation': round(sig(1 - col_corr, 0, 0.4), 1)
         }
 
-
-        # ══════════════════════════════════════════════════════
-        # HYBRID ANOMALY DECISION
-        # ══════════════════════════════════════════════════════
-
-        signals = list(
-            features_display.values()
-        )
-
-
-        # Number of anomalies >= 75%
-
-        high_anomalies = sum(
-            value >= 75
-            for value in signals
-        )
-
-
-        # Strongest anomaly
-
-        strongest_anomaly = max(
-            signals
-        )
-
-
-        # ── Default: Trust XGBoost ────────────────────────────
-
-        verdict = (
-            'FAKE'
-            if pred == 1
-            else 'REAL'
-        )
-
-
-        # ── Forensic Override ─────────────────────────────────
-
-        # CASE 1:
-        # Two or more strong anomalies.
-        # This is much safer than forcing FAKE
-        # because of only one abnormal feature.
+        signals = list(features_display.values())
+        high_anomalies = sum(value >= 75 for value in signals)
+        strongest_anomaly = max(signals)
+        verdict = 'FAKE' if pred == 1 else 'REAL'
 
         if high_anomalies >= 2:
-
             verdict = 'FAKE'
-
-            forensic_score = strongest_anomaly
-
-            fake_pct = max(
-                fake_pct,
-                forensic_score
-            )
-
+            fake_pct = max(fake_pct, strongest_anomaly)
+            real_pct = 100 - fake_pct
+        elif strongest_anomaly >= 95 and real_pct < 75:
+            verdict = 'FAKE'
+            fake_pct = max(fake_pct, strongest_anomaly)
             real_pct = 100 - fake_pct
 
-
-        # CASE 2:
-        # One EXTREMELY high anomaly (95%+)
-        # but only override if model is NOT strongly
-        # confident that the image is real.
-
-        elif (
-            strongest_anomaly >= 95
-            and real_pct < 75
-        ):
-
-            verdict = 'FAKE'
-
-            fake_pct = max(
-                fake_pct,
-                strongest_anomaly
-            )
-
-            real_pct = 100 - fake_pct
-
-
-        # CASE 3:
-        # Otherwise leave XGBoost decision unchanged
-
-
-        # ── Final confidence ──────────────────────────────────
-
-        confidence = max(
-            fake_pct,
-            real_pct
-        )
+        confidence = max(fake_pct, real_pct)
 
 
         # ── Processing time ───────────────────────────────────
@@ -364,7 +748,10 @@ def detect():
                 elapsed,
 
             'model':
-                'XGBoost-v1 + Forensic Analysis'
+                'XGBoost-v1 + Forensic Analysis',
+
+            'metadata':
+                metadata
         })
 
 
@@ -993,11 +1380,249 @@ def analyze_darkweb_link(raw_url: str):
     }
 
 
+def is_public_address(host):
+    try:
+        addresses = {info[4][0] for info in socket.getaddrinfo(host, None)}
+    except socket.gaierror:
+        return False, 'Hostname could not be resolved'
+    for address in addresses:
+        parsed = ipaddress.ip_address(address)
+        if (
+            parsed.is_private or parsed.is_loopback or parsed.is_link_local
+            or parsed.is_reserved or parsed.is_multicast or parsed.is_unspecified
+        ):
+            return False, f'Resolves to a non-public address ({address})'
+    return True, None
+
+
+class NoRedirectHandler(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
+
+
+def fetch_public_page(raw_url):
+    analysis = analyze_darkweb_link(raw_url)
+    if 'error' in analysis:
+        return analysis
+    if analysis['category'] == 'onion':
+        return fetch_onion_page(analysis)
+
+    parsed = urlparse(analysis['normalized'])
+    if parsed.username or parsed.password:
+        return {'error': 'URLs containing embedded credentials are not fetched'}
+    public, reason = is_public_address(parsed.hostname)
+    if not public:
+        return {'error': reason}
+
+    current = analysis['normalized']
+    redirects = []
+    response = None
+    try:
+        for _ in range(3):
+            request = urllib.request.Request(
+                current,
+                headers={'User-Agent': 'CyberForensicsAI-ReadOnly/1.0', 'Accept': 'text/html,text/plain;q=0.8'},
+                method='GET',
+            )
+            opener = urllib.request.build_opener(NoRedirectHandler)
+            try:
+                response = opener.open(request, timeout=6)
+            except urllib.error.HTTPError as redirect_error:
+                if redirect_error.code not in {301, 302, 303, 307, 308}:
+                    raise
+                location = redirect_error.headers.get('Location')
+                if not location:
+                    return {'error': 'Redirect response did not include a destination'}
+                next_url = urllib.parse.urljoin(current, location)
+                redirects.append({'from': current, 'to': next_url, 'status': redirect_error.code})
+                next_parsed = urlparse(next_url)
+                if next_parsed.scheme not in {'http', 'https'}:
+                    return {'error': 'Redirected to an unsupported scheme'}
+                public, reason = is_public_address(next_parsed.hostname)
+                if not public:
+                    return {'error': f'Redirect blocked: {reason}'}
+                current = next_url
+                continue
+            final_url = response.geturl()
+            final_parsed = urlparse(final_url)
+            if final_parsed.scheme not in {'http', 'https'}:
+                return {'error': 'Redirected to an unsupported scheme'}
+            public, reason = is_public_address(final_parsed.hostname)
+            if not public:
+                return {'error': f'Redirect blocked: {reason}'}
+            current = final_url
+            break
+        if response is None:
+            return {'error': 'No response received'}
+        content_type = response.headers.get_content_type()
+        body = response.read(262144)
+        if content_type not in {'text/html', 'text/plain', 'application/xhtml+xml'}:
+            return {
+                **analysis,
+                'fetch_status': 'SKIPPED',
+                'http_status': response.status,
+                'content_type': content_type,
+                'redirects': redirects,
+                'fetch_note': 'The response was not HTML/text, so no page content was parsed.',
+            }
+        source = body.decode(response.headers.get_content_charset() or 'utf-8', errors='replace')
+        page = analyze_darkweb_page(source, current)
+        combined_risk = max(analysis['risk_score'], page.get('risk_score', 0))
+        result = {
+            **analysis,
+            **page,
+            'input': analysis['input'],
+            'normalized': analysis['normalized'],
+            'host': urlparse(current).hostname or analysis['host'],
+            'fetch_status': 'FETCHED_READ_ONLY',
+            'http_status': response.status,
+            'content_type': content_type,
+            'bytes_read': len(body),
+            'content': page.get('text', '')[:12000],
+            'content_truncated': len(page.get('text', '')) > 12000,
+            'redirects': redirects,
+            'risk_score': round(float(combined_risk), 1),
+            'verdict': 'SUSPICIOUS' if combined_risk >= 35 else 'CLEARNET_VERIFIED',
+            'fetch_note': 'Fetched server-side with a read-only GET; scripts were not executed.',
+        }
+        return result
+    except (urllib.error.URLError, TimeoutError, ValueError) as error:
+        return {
+            **analysis,
+            'fetch_status': 'UNREACHABLE',
+            'fetch_note': f'No page content was collected: {error.reason if hasattr(error, "reason") else error}',
+        }
+    finally:
+        if response:
+            response.close()
+
+
+def fetch_onion_page(analysis):
+    proxy = os.environ.get('TOR_SOCKS_PROXY', 'socks5h://127.0.0.1:9050').strip()
+    if not proxy.startswith(('socks5://', 'socks5h://')):
+        return {
+            **analysis,
+            'verdict': 'ONION_NOT_CONNECTED',
+            'risk_score': 50,
+            'fetch_status': 'TOR_NOT_CONFIGURED',
+            'fetch_note': 'Onion content was not fetched. Configure a local Tor SOCKS5 gateway; direct onion access is blocked.',
+            'summary': 'Onion structure checked locally; no direct connection was attempted.',
+        }
+    redirects = []
+    current_url = analysis['normalized']
+    try:
+        for _ in range(4):
+            response = requests.get(
+                current_url,
+                proxies={'http': proxy, 'https': proxy},
+                headers={
+                    'User-Agent': 'CyberForensicsAI-Tor-ReadOnly/1.0',
+                    'Accept': 'text/html,text/plain;q=0.8',
+                },
+                timeout=(5, 15),
+                allow_redirects=False,
+                stream=True,
+                verify=False,
+            )
+            if response.is_redirect or response.is_permanent_redirect:
+                location = response.headers.get('location')
+                response.close()
+                if not location:
+                    return {
+                        **analysis,
+                        'fetch_status': 'TOR_REDIRECT_INVALID',
+                        'redirects': redirects,
+                        'risk_score': 50,
+                        'verdict': 'ONION_SUSPICIOUS',
+                        'fetch_note': 'The onion service returned a redirect without a destination.',
+                        'summary': 'Onion content was not collected because its redirect was invalid.',
+                    }
+                next_analysis = analyze_darkweb_link(urljoin(current_url, location))
+                if next_analysis.get('category') != 'onion' or 'error' in next_analysis:
+                    return {
+                        **analysis,
+                        'fetch_status': 'TOR_REDIRECT_BLOCKED',
+                        'redirects': redirects,
+                        'risk_score': 55,
+                        'verdict': 'ONION_SUSPICIOUS',
+                        'fetch_note': 'A redirect left the onion namespace, so it was blocked.',
+                        'summary': 'Onion content was not followed outside the onion namespace.',
+                    }
+                redirects.append(next_analysis['normalized'])
+                current_url = next_analysis['normalized']
+                continue
+            break
+        else:
+            return {
+                **analysis,
+                'fetch_status': 'TOR_REDIRECT_LIMIT',
+                'redirects': redirects,
+                'risk_score': 50,
+                'verdict': 'ONION_SUSPICIOUS',
+                'fetch_note': 'The onion service exceeded the four-request redirect limit.',
+                'summary': 'Onion content was not collected because redirect limits were exceeded.',
+            }
+        content_type = response.headers.get('content-type', '').split(';', 1)[0].lower()
+        body = response.raw.read(262144)
+        if content_type not in {'text/html', 'text/plain', 'application/xhtml+xml', ''}:
+            return {
+                **analysis,
+                'fetch_status': 'FETCHED_NON_TEXT',
+                'http_status': response.status_code,
+                'redirects': redirects,
+                'content_type': content_type or 'unknown',
+                'fetch_note': 'Fetched through Tor, but the response was not readable HTML/text.',
+                'summary': 'Onion service reached through the configured Tor gateway; content was not parsed.',
+            }
+        source = body.decode(response.encoding or 'utf-8', errors='replace')
+        page = analyze_darkweb_page(source, analysis['normalized'])
+        combined_risk = max(analysis['risk_score'], page.get('risk_score', 0))
+        return {
+            **analysis,
+            **page,
+            'input': analysis['input'],
+            'normalized': analysis['normalized'],
+            'host': analysis['host'],
+            'fetch_status': 'FETCHED_THROUGH_TOR',
+            'http_status': response.status_code,
+            'redirects': redirects,
+            'content_type': content_type or 'text/html',
+            'bytes_read': len(body),
+            'content': page.get('text', '')[:12000],
+            'content_truncated': len(page.get('text', '')) > 12000,
+            'risk_score': round(float(combined_risk), 1),
+            'verdict': 'ONION_SUSPICIOUS' if combined_risk >= 35 else 'ONION_CONTENT_REVIEW',
+            'fetch_note': 'Fetched through the configured Tor SOCKS5 gateway with a read-only GET; scripts were not executed.',
+            'summary': 'Onion page content was collected through Tor and analyzed locally. A low score is not proof the site is safe.',
+        }
+    except requests.RequestException as error:
+        return {
+            **analysis,
+            'verdict': 'ONION_UNREACHABLE',
+            'risk_score': 50,
+            'fetch_status': 'TOR_UNREACHABLE',
+            'fetch_note': f'Onion content was not collected through Tor: {error}',
+            'summary': 'Onion structure is valid, but the Tor gateway or service did not return page content.',
+        }
+    finally:
+        if 'response' in locals():
+            response.close()
+
+
 @app.route('/api/darkweb/link-intel', methods=['POST'])
 def darkweb_link_intel():
     data = request.get_json(silent=True) or {}
     raw_url = data.get('url', '')
     result = analyze_darkweb_link(raw_url)
+    if 'error' in result:
+        return jsonify(result), 400
+    return jsonify(result)
+
+
+@app.route('/api/darkweb/fetch-intel', methods=['POST'])
+def darkweb_fetch_intel():
+    data = request.get_json(silent=True) or {}
+    result = fetch_public_page(data.get('url', ''))
     if 'error' in result:
         return jsonify(result), 400
     return jsonify(result)
@@ -1130,6 +1755,7 @@ def analyze_darkweb_page(source_html: str, origin_url: str = ''):
         'verdict': verdict,
         'origin_url': origin_url.strip(),
         'links': cleaned_links[:20],
+        'text': text,
         'summary': 'Snapshot-only page analysis; no live site fetch performed.',
     }
 
